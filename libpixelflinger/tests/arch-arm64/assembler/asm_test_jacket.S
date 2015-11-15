@@ -27,7 +27,7 @@
  */
 
     .text
-    .align 0
+    .align
 
     .global asm_test_jacket
 

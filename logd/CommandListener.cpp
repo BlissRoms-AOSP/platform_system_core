@@ -25,9 +25,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include <string>
-
-#include <base/stringprintf.h>
 #include <cutils/sockets.h>
 #include <private/android_filesystem_config.h>
 #include <sysutils/SocketClient.h>
@@ -37,7 +34,8 @@
 
 CommandListener::CommandListener(LogBuffer *buf, LogReader * /*reader*/,
                                  LogListener * /*swl*/) :
-        FrameworkListener(getLogSocket()) {
+        FrameworkListener(getLogSocket()),
+        mBuf(*buf) {
     // registerCmd(new ShutdownCmd(buf, writer, swl));
     registerCmd(new ClearCmd(buf));
     registerCmd(new GetBufSizeCmd(buf));
@@ -49,9 +47,10 @@ CommandListener::CommandListener(LogBuffer *buf, LogReader * /*reader*/,
     registerCmd(new ReinitCmd());
 }
 
-CommandListener::ShutdownCmd::ShutdownCmd(LogReader *reader,
+CommandListener::ShutdownCmd::ShutdownCmd(LogBuffer *buf, LogReader *reader,
                                           LogListener *swl) :
         LogCommand("shutdown"),
+        mBuf(*buf),
         mReader(*reader),
         mSwl(*swl) {
 }
@@ -96,7 +95,8 @@ int CommandListener::ClearCmd::runCommand(SocketClient *cli,
         return 0;
     }
 
-    cli->sendMsg(mBuf.clear((log_id_t) id, uid) ? "busy" : "success");
+    mBuf.clear((log_id_t) id, uid);
+    cli->sendMsg("success");
     return 0;
 }
 
@@ -191,13 +191,22 @@ CommandListener::GetStatisticsCmd::GetStatisticsCmd(LogBuffer *buf) :
         mBuf(*buf) {
 }
 
-static std::string package_string(const std::string &str) {
+static void package_string(char **strp) {
+    const char *a = *strp;
+    if (!a) {
+        a = "";
+    }
+
     // Calculate total buffer size prefix, count is the string length w/o nul
     char fmt[32];
-    for(size_t l = str.length(), y = 0, x = 6; y != x; y = x, x = strlen(fmt) - 2) {
+    for(size_t l = strlen(a), y = 0, x = 6; y != x; y = x, x = strlen(fmt) - 2) {
         snprintf(fmt, sizeof(fmt), "%zu\n%%s\n\f", l + x);
     }
-    return android::base::StringPrintf(fmt, str.c_str());
+
+    char *b = *strp;
+    *strp = NULL;
+    asprintf(strp, fmt, a);
+    free(b);
 }
 
 int CommandListener::GetStatisticsCmd::runCommand(SocketClient *cli,
@@ -221,7 +230,16 @@ int CommandListener::GetStatisticsCmd::runCommand(SocketClient *cli,
         }
     }
 
-    cli->sendMsg(package_string(mBuf.formatStatistics(uid, logMask)).c_str());
+    char *buf = NULL;
+
+    mBuf.formatStatistics(&buf, uid, logMask);
+    if (!buf) {
+        cli->sendMsg("Failed");
+    } else {
+        package_string(&buf);
+        cli->sendMsg(buf);
+        free(buf);
+    }
     return 0;
 }
 
@@ -233,7 +251,15 @@ CommandListener::GetPruneListCmd::GetPruneListCmd(LogBuffer *buf) :
 int CommandListener::GetPruneListCmd::runCommand(SocketClient *cli,
                                          int /*argc*/, char ** /*argv*/) {
     setname();
-    cli->sendMsg(package_string(mBuf.formatPrune()).c_str());
+    char *buf = NULL;
+    mBuf.formatPrune(&buf);
+    if (!buf) {
+        cli->sendMsg("Failed");
+    } else {
+        package_string(&buf);
+        cli->sendMsg(buf);
+        free(buf);
+    }
     return 0;
 }
 
@@ -250,15 +276,20 @@ int CommandListener::SetPruneListCmd::runCommand(SocketClient *cli,
         return 0;
     }
 
-    std::string str;
+    char *cp = NULL;
     for (int i = 1; i < argc; ++i) {
-        if (str.length()) {
-            str += " ";
+        char *p = cp;
+        if (p) {
+            cp = NULL;
+            asprintf(&cp, "%s %s", p, argv[i]);
+            free(p);
+        } else {
+            asprintf(&cp, "%s", argv[i]);
         }
-        str += argv[i];
     }
 
-    int ret = mBuf.initPrune(str.c_str());
+    int ret = mBuf.initPrune(cp);
+    free(cp);
 
     if (ret) {
         cli->sendMsg("Invalid");

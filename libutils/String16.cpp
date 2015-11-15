@@ -25,7 +25,6 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#include "SharedBuffer.h"
 
 namespace android {
 
@@ -164,11 +163,6 @@ String16::String16(const char* o, size_t len)
 String16::~String16()
 {
     SharedBuffer::bufferFromData(mString)->release();
-}
-
-size_t String16::size() const
-{
-    return SharedBuffer::sizeFromData(mString)/sizeof(char16_t)-1;
 }
 
 void String16::setTo(const String16& other)

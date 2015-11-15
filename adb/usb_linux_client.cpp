@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define TRACE_TAG USB
+#define TRACE_TAG TRACE_USB
 
 #include "sysdeps.h"
 
@@ -88,14 +88,11 @@ struct desc_v2 {
     __le32 fs_count;
     __le32 hs_count;
     __le32 ss_count;
-    __le32 os_count;
     struct func_desc fs_descs, hs_descs;
     struct ss_func_desc ss_descs;
-    struct usb_os_desc_header os_header;
-    struct usb_ext_compat_desc os_desc;
 } __attribute__((packed));
 
-static struct func_desc fs_descriptors = {
+struct func_desc fs_descriptors = {
     .intf = {
         .bLength = sizeof(fs_descriptors.intf),
         .bDescriptorType = USB_DT_INTERFACE,
@@ -122,7 +119,7 @@ static struct func_desc fs_descriptors = {
     },
 };
 
-static struct func_desc hs_descriptors = {
+struct func_desc hs_descriptors = {
     .intf = {
         .bLength = sizeof(hs_descriptors.intf),
         .bDescriptorType = USB_DT_INTERFACE,
@@ -184,24 +181,6 @@ static struct ss_func_desc ss_descriptors = {
     },
 };
 
-struct usb_ext_compat_desc os_desc_compat = {
-    .bFirstInterfaceNumber = 0,
-    .Reserved1 = cpu_to_le32(1),
-    .CompatibleID = {0},
-    .SubCompatibleID = {0},
-    .Reserved2 = {0},
-};
-
-static struct usb_os_desc_header os_desc_header = {
-    .interface = cpu_to_le32(1),
-    .dwLength = cpu_to_le32(sizeof(os_desc_header) + sizeof(os_desc_compat)),
-    .bcdVersion = cpu_to_le32(1),
-    .wIndex = cpu_to_le32(4),
-    .bCount = cpu_to_le32(1),
-    .Reserved = cpu_to_le32(0),
-};
-
-
 #define STR_INTERFACE_ "ADB Interface"
 
 static const struct {
@@ -230,8 +209,6 @@ static void *usb_adb_open_thread(void *x)
     struct usb_handle *usb = (struct usb_handle *)x;
     int fd;
 
-    adb_thread_setname("usb open");
-
     while (true) {
         // wait until the USB device needs opening
         adb_mutex_lock(&usb->lock);
@@ -239,7 +216,7 @@ static void *usb_adb_open_thread(void *x)
             adb_cond_wait(&usb->notify, &usb->lock);
         adb_mutex_unlock(&usb->lock);
 
-        D("[ usb_thread - opening device ]");
+        D("[ usb_thread - opening device ]\n");
         do {
             /* XXX use inotify? */
             fd = unix_open("/dev/android_adb", O_RDWR);
@@ -251,12 +228,12 @@ static void *usb_adb_open_thread(void *x)
                 adb_sleep_ms(1000);
             }
         } while (fd < 0);
-        D("[ opening device succeeded ]");
+        D("[ opening device succeeded ]\n");
 
         close_on_exec(fd);
         usb->fd = fd;
 
-        D("[ usb_thread - registering device ]");
+        D("[ usb_thread - registering device ]\n");
         register_usb_transport(usb, 0, 0, 1);
     }
 
@@ -268,43 +245,37 @@ static int usb_adb_write(usb_handle *h, const void *data, int len)
 {
     int n;
 
-    D("about to write (fd=%d, len=%d)", h->fd, len);
-    n = unix_write(h->fd, data, len);
+    D("about to write (fd=%d, len=%d)\n", h->fd, len);
+    n = adb_write(h->fd, data, len);
     if(n != len) {
-        D("ERROR: fd = %d, n = %d, errno = %d (%s)",
+        D("ERROR: fd = %d, n = %d, errno = %d (%s)\n",
             h->fd, n, errno, strerror(errno));
         return -1;
     }
-    D("[ done fd=%d ]", h->fd);
+    D("[ done fd=%d ]\n", h->fd);
     return 0;
 }
 
 static int usb_adb_read(usb_handle *h, void *data, int len)
 {
-    D("about to read (fd=%d, len=%d)", h->fd, len);
-    while (len > 0) {
-        // The kernel implementation of adb_read in f_adb.c doesn't support
-        // reads larger then 4096 bytes. Read the data in 4096 byte chunks to
-        // avoid the issue. (The ffs implementation doesn't have this limit.)
-        int bytes_to_read = len < 4096 ? len : 4096;
-        int n = unix_read(h->fd, data, bytes_to_read);
-        if (n != bytes_to_read) {
-            D("ERROR: fd = %d, n = %d, errno = %d (%s)",
-                h->fd, n, errno, strerror(errno));
-            return -1;
-        }
-        len -= n;
-        data = ((char*)data) + n;
+    int n;
+
+    D("about to read (fd=%d, len=%d)\n", h->fd, len);
+    n = adb_read(h->fd, data, len);
+    if(n != len) {
+        D("ERROR: fd = %d, n = %d, errno = %d (%s)\n",
+            h->fd, n, errno, strerror(errno));
+        return -1;
     }
-    D("[ done fd=%d ]", h->fd);
+    D("[ done fd=%d ]\n", h->fd);
     return 0;
 }
 
 static void usb_adb_kick(usb_handle *h)
 {
-    D("usb_kick");
+    D("usb_kick\n");
     adb_mutex_lock(&h->lock);
-    unix_close(h->fd);
+    adb_close(h->fd);
     h->fd = -1;
 
     // notify usb_adb_open_thread that we are disconnected
@@ -332,13 +303,14 @@ static void usb_adb_init()
     // and when we are not.
     int fd = unix_open("/dev/android_adb_enable", O_RDWR);
     if (fd < 0) {
-       D("failed to open /dev/android_adb_enable");
+       D("failed to open /dev/android_adb_enable\n");
     } else {
         close_on_exec(fd);
     }
 
-    D("[ usb_init - starting thread ]");
-    if (!adb_thread_create(usb_adb_open_thread, h)) {
+    D("[ usb_init - starting thread ]\n");
+    adb_thread_t tid;
+    if(adb_thread_create(&tid, usb_adb_open_thread, h)){
         fatal_errno("cannot create usb thread");
     }
 }
@@ -353,22 +325,19 @@ static void init_functionfs(struct usb_handle *h)
     v2_descriptor.header.magic = cpu_to_le32(FUNCTIONFS_DESCRIPTORS_MAGIC_V2);
     v2_descriptor.header.length = cpu_to_le32(sizeof(v2_descriptor));
     v2_descriptor.header.flags = FUNCTIONFS_HAS_FS_DESC | FUNCTIONFS_HAS_HS_DESC |
-                                 FUNCTIONFS_HAS_SS_DESC | FUNCTIONFS_HAS_MS_OS_DESC;
+                                 FUNCTIONFS_HAS_SS_DESC;
     v2_descriptor.fs_count = 3;
     v2_descriptor.hs_count = 3;
     v2_descriptor.ss_count = 5;
-    v2_descriptor.os_count = 1;
     v2_descriptor.fs_descs = fs_descriptors;
     v2_descriptor.hs_descs = hs_descriptors;
     v2_descriptor.ss_descs = ss_descriptors;
-    v2_descriptor.os_header = os_desc_header;
-    v2_descriptor.os_desc = os_desc_compat;
 
     if (h->control < 0) { // might have already done this before
-        D("OPENING %s", USB_FFS_ADB_EP0);
+        D("OPENING %s\n", USB_FFS_ADB_EP0);
         h->control = adb_open(USB_FFS_ADB_EP0, O_RDWR);
         if (h->control < 0) {
-            D("[ %s: cannot open control endpoint: errno=%d]", USB_FFS_ADB_EP0, errno);
+            D("[ %s: cannot open control endpoint: errno=%d]\n", USB_FFS_ADB_EP0, errno);
             goto err;
         }
 
@@ -380,30 +349,30 @@ static void init_functionfs(struct usb_handle *h)
             v1_descriptor.header.hs_count = 3;
             v1_descriptor.fs_descs = fs_descriptors;
             v1_descriptor.hs_descs = hs_descriptors;
-            D("[ %s: Switching to V1_descriptor format errno=%d ]", USB_FFS_ADB_EP0, errno);
+            D("[ %s: Switching to V1_descriptor format errno=%d ]\n", USB_FFS_ADB_EP0, errno);
             ret = adb_write(h->control, &v1_descriptor, sizeof(v1_descriptor));
             if (ret < 0) {
-                D("[ %s: write descriptors failed: errno=%d ]", USB_FFS_ADB_EP0, errno);
+                D("[ %s: write descriptors failed: errno=%d ]\n", USB_FFS_ADB_EP0, errno);
                 goto err;
             }
         }
 
         ret = adb_write(h->control, &strings, sizeof(strings));
         if (ret < 0) {
-            D("[ %s: writing strings failed: errno=%d]", USB_FFS_ADB_EP0, errno);
+            D("[ %s: writing strings failed: errno=%d]\n", USB_FFS_ADB_EP0, errno);
             goto err;
         }
     }
 
     h->bulk_out = adb_open(USB_FFS_ADB_OUT, O_RDWR);
     if (h->bulk_out < 0) {
-        D("[ %s: cannot open bulk-out ep: errno=%d ]", USB_FFS_ADB_OUT, errno);
+        D("[ %s: cannot open bulk-out ep: errno=%d ]\n", USB_FFS_ADB_OUT, errno);
         goto err;
     }
 
     h->bulk_in = adb_open(USB_FFS_ADB_IN, O_RDWR);
     if (h->bulk_in < 0) {
-        D("[ %s: cannot open bulk-in ep: errno=%d ]", USB_FFS_ADB_IN, errno);
+        D("[ %s: cannot open bulk-in ep: errno=%d ]\n", USB_FFS_ADB_IN, errno);
         goto err;
     }
 
@@ -429,8 +398,6 @@ static void *usb_ffs_open_thread(void *x)
 {
     struct usb_handle *usb = (struct usb_handle *)x;
 
-    adb_thread_setname("usb ffs open");
-
     while (true) {
         // wait until the USB device needs opening
         adb_mutex_lock(&usb->lock);
@@ -448,7 +415,7 @@ static void *usb_ffs_open_thread(void *x)
         }
         property_set("sys.usb.ffs.ready", "1");
 
-        D("[ usb_thread - registering device ]");
+        D("[ usb_thread - registering device ]\n");
         register_usb_transport(usb, 0, 0, 1);
     }
 
@@ -459,54 +426,64 @@ static void *usb_ffs_open_thread(void *x)
 static int bulk_write(int bulk_in, const uint8_t* buf, size_t length)
 {
     size_t count = 0;
+    int ret;
 
-    while (count < length) {
-        int ret = adb_write(bulk_in, buf + count, length - count);
-        if (ret < 0) return -1;
-        count += ret;
-    }
+    do {
+        ret = adb_write(bulk_in, buf + count, length - count);
+        if (ret < 0) {
+            if (errno != EINTR)
+                return ret;
+        } else {
+            count += ret;
+        }
+    } while (count < length);
 
-    D("[ bulk_write done fd=%d ]", bulk_in);
+    D("[ bulk_write done fd=%d ]\n", bulk_in);
     return count;
 }
 
 static int usb_ffs_write(usb_handle* h, const void* data, int len)
 {
-    D("about to write (fd=%d, len=%d)", h->bulk_in, len);
+    D("about to write (fd=%d, len=%d)\n", h->bulk_in, len);
     int n = bulk_write(h->bulk_in, reinterpret_cast<const uint8_t*>(data), len);
     if (n != len) {
-        D("ERROR: fd = %d, n = %d: %s", h->bulk_in, n, strerror(errno));
+        D("ERROR: fd = %d, n = %d: %s\n", h->bulk_in, n, strerror(errno));
         return -1;
     }
-    D("[ done fd=%d ]", h->bulk_in);
+    D("[ done fd=%d ]\n", h->bulk_in);
     return 0;
 }
 
 static int bulk_read(int bulk_out, uint8_t* buf, size_t length)
 {
     size_t count = 0;
+    int ret;
 
-    while (count < length) {
-        int ret = adb_read(bulk_out, buf + count, length - count);
+    do {
+        ret = adb_read(bulk_out, buf + count, length - count);
         if (ret < 0) {
-            D("[ bulk_read failed fd=%d length=%zu count=%zu ]", bulk_out, length, count);
-            return -1;
+            if (errno != EINTR) {
+                D("[ bulk_read failed fd=%d length=%zu count=%zu ]\n",
+                                           bulk_out, length, count);
+                return ret;
+            }
+        } else {
+            count += ret;
         }
-        count += ret;
-    }
+    } while (count < length);
 
     return count;
 }
 
 static int usb_ffs_read(usb_handle* h, void* data, int len)
 {
-    D("about to read (fd=%d, len=%d)", h->bulk_out, len);
+    D("about to read (fd=%d, len=%d)\n", h->bulk_out, len);
     int n = bulk_read(h->bulk_out, reinterpret_cast<uint8_t*>(data), len);
     if (n != len) {
-        D("ERROR: fd = %d, n = %d: %s", h->bulk_out, n, strerror(errno));
+        D("ERROR: fd = %d, n = %d: %s\n", h->bulk_out, n, strerror(errno));
         return -1;
     }
-    D("[ done fd=%d ]", h->bulk_out);
+    D("[ done fd=%d ]\n", h->bulk_out);
     return 0;
 }
 
@@ -515,14 +492,12 @@ static void usb_ffs_kick(usb_handle *h)
     int err;
 
     err = ioctl(h->bulk_in, FUNCTIONFS_CLEAR_HALT);
-    if (err < 0) {
+    if (err < 0)
         D("[ kick: source (fd=%d) clear halt failed (%d) ]", h->bulk_in, errno);
-    }
 
     err = ioctl(h->bulk_out, FUNCTIONFS_CLEAR_HALT);
-    if (err < 0) {
+    if (err < 0)
         D("[ kick: sink (fd=%d) clear halt failed (%d) ]", h->bulk_out, errno);
-    }
 
     adb_mutex_lock(&h->lock);
 
@@ -540,7 +515,7 @@ static void usb_ffs_kick(usb_handle *h)
 
 static void usb_ffs_init()
 {
-    D("[ usb_init - using FunctionFS ]");
+    D("[ usb_init - using FunctionFS ]\n");
 
     usb_handle* h = reinterpret_cast<usb_handle*>(calloc(1, sizeof(usb_handle)));
     if (h == nullptr) fatal("couldn't allocate usb_handle");
@@ -555,8 +530,9 @@ static void usb_ffs_init()
     adb_cond_init(&h->notify, 0);
     adb_mutex_init(&h->lock, 0);
 
-    D("[ usb_init - starting thread ]");
-    if (!adb_thread_create(usb_ffs_open_thread, h)) {
+    D("[ usb_init - starting thread ]\n");
+    adb_thread_t tid;
+    if (adb_thread_create(&tid, usb_ffs_open_thread, h)){
         fatal_errno("[ cannot create usb thread ]\n");
     }
 }
@@ -567,6 +543,10 @@ void usb_init()
         usb_ffs_init();
     else
         usb_adb_init();
+}
+
+void usb_cleanup()
+{
 }
 
 int usb_write(usb_handle *h, const void *data, int len)

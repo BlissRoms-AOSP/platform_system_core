@@ -25,6 +25,27 @@
 #include <log/log.h>
 #include <log/log_read.h>
 
+// Hijack this header as a common include file used by most all sources
+// to report some utilities defined here and there.
+
+namespace android {
+
+// Furnished in main.cpp. Caller must own and free returned value
+char *uidToName(uid_t uid);
+
+// Furnished in LogStatistics.cpp. Caller must own and free returned value
+char *pidToName(pid_t pid);
+char *tidToName(pid_t tid);
+
+// Furnished in main.cpp. Thread safe.
+const char *tagToName(uint32_t tag);
+
+}
+
+static inline bool worstUidEnabledForLogid(log_id_t id) {
+    return (id != LOG_ID_CRASH) && (id != LOG_ID_KERNEL) && (id != LOG_ID_EVENTS);
+}
+
 class LogBuffer;
 
 #define EXPIRE_HOUR_THRESHOLD 24 // Only expire chatty UID logs to preserve
@@ -34,9 +55,6 @@ class LogBuffer;
 #define EXPIRE_RATELIMIT 10      // maximum rate in seconds to report expiration
 
 class LogBufferElement {
-
-    friend LogBuffer;
-
     const log_id_t mLogId;
     const uid_t mUid;
     const pid_t mPid;
@@ -47,7 +65,7 @@ class LogBufferElement {
         unsigned short mDropped;      // mMsg == NULL
     };
     const uint64_t mSequence;
-    log_time mRealTime;
+    const log_time mRealTime;
     static atomic_int_fast64_t sequence;
 
     // assumption: mMsg == NULL
@@ -67,7 +85,7 @@ public:
     unsigned short getDropped(void) const { return mMsg ? 0 : mDropped; }
     unsigned short setDropped(unsigned short value) {
         if (mMsg) {
-            delete [] mMsg;
+            free(mMsg);
             mMsg = NULL;
         }
         return mDropped = value;

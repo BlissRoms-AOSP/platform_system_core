@@ -259,8 +259,8 @@ static void show_help(const char *cmd)
                     "  -r <kbytes>     Rotate log every kbytes. Requires -f\n"
                     "  -n <count>      Sets max number of rotated logs to <count>, default 4\n"
                     "  -v <format>     Sets the log print format, where <format> is:\n\n"
-                    "                      brief color epoch long monotonic printable process raw\n"
-                    "                      tag thread threadtime time usec UTC year zone\n\n"
+                    "                      brief color long printable process raw tag thread\n"
+                    "                      threadtime time usec\n\n"
                     "  -D              print dividers between each log buffer\n"
                     "  -c              clear (flush) the entire log and exit\n"
                     "  -d              dump the log and then exit (don't block)\n"
@@ -268,8 +268,7 @@ static void show_help(const char *cmd)
                     "  -t '<time>'     print most recent lines since specified time (implies -d)\n"
                     "  -T <count>      print only the most recent <count> lines (does not imply -d)\n"
                     "  -T '<time>'     print most recent lines since specified time (not imply -d)\n"
-                    "                  count is pure numerical, time is 'MM-DD hh:mm:ss.mmm...'\n"
-                    "                  'YYYY-MM-DD hh:mm:ss.mmm...' or 'sssss.mmm...' format\n"
+                    "                  count is pure numerical, time is 'MM-DD hh:mm:ss.mmm'\n"
                     "  -g              get the size of the log's ring buffer and exit\n"
                     "  -L              dump logs from prior to last reboot\n"
                     "  -b <buffer>     Request alternate ring buffer, 'main', 'system', 'radio',\n"
@@ -378,18 +377,7 @@ static void logcat_panic(bool showHelp, const char *fmt, ...)
     exit(EXIT_FAILURE);
 }
 
-static char *parseTime(log_time &t, const char *cp) {
-
-    char *ep = t.strptime(cp, "%m-%d %H:%M:%S.%q");
-    if (ep) {
-        return ep;
-    }
-    ep = t.strptime(cp, "%Y-%m-%d %H:%M:%S.%q");
-    if (ep) {
-        return ep;
-    }
-    return t.strptime(cp, "%s.%q");
-}
+static const char g_defaultTimeFormat[] = "%m-%d %H:%M:%S.%q";
 
 // Find last logged line in gestalt of all matching existing output files
 static log_time lastLogTime(char *outputFileName) {
@@ -399,10 +387,6 @@ static log_time lastLogTime(char *outputFileName) {
     }
 
     log_time now(CLOCK_REALTIME);
-    bool monotonic = android_log_timestamp() == 'm';
-    if (monotonic) {
-        now = log_time(CLOCK_MONOTONIC);
-    }
 
     std::string directory;
     char *file = strrchr(outputFileName, '/');
@@ -421,11 +405,7 @@ static log_time lastLogTime(char *outputFileName) {
     struct dirent *dp;
     while ((dp = readdir(dir.get())) != NULL) {
         if ((dp->d_type != DT_REG)
-                // If we are using realtime, check all files that match the
-                // basename for latest time. If we are using monotonic time
-                // then only check the main file because time cycles on
-                // every reboot.
-                || strncmp(dp->d_name, file, len + monotonic)
+                || strncmp(dp->d_name, file, len)
                 || (dp->d_name[len]
                     && ((dp->d_name[len] != '.')
                         || !isdigit(dp->d_name[len+1])))) {
@@ -443,7 +423,7 @@ static log_time lastLogTime(char *outputFileName) {
         bool found = false;
         for (const auto& line : android::base::Split(file, "\n")) {
             log_time t(log_time::EPOCH);
-            char *ep = parseTime(t, line.c_str());
+            char *ep = t.strptime(line.c_str(), g_defaultTimeFormat);
             if (!ep || (*ep != ' ')) {
                 continue;
             }
@@ -542,10 +522,11 @@ int main(int argc, char **argv)
                 /* FALLTHRU */
             case 'T':
                 if (strspn(optarg, "0123456789") != strlen(optarg)) {
-                    char *cp = parseTime(tail_time, optarg);
+                    char *cp = tail_time.strptime(optarg, g_defaultTimeFormat);
                     if (!cp) {
-                        logcat_panic(false, "-%c \"%s\" not in time format\n",
-                                     ret, optarg);
+                        logcat_panic(false,
+                                    "-%c \"%s\" not in \"%s\" time format\n",
+                                    ret, optarg, g_defaultTimeFormat);
                     }
                     if (*cp) {
                         char c = *cp;
@@ -668,7 +649,7 @@ int main(int argc, char **argv)
             break;
 
             case 'f':
-                if ((tail_time == log_time::EPOCH) && (tail_lines == 0)) {
+                if ((tail_time == log_time::EPOCH) && (tail_lines != 0)) {
                     tail_time = lastLogTime(optarg);
                 }
                 // redirect output to a file
@@ -844,65 +825,48 @@ int main(int argc, char **argv)
     } else {
         logger_list = android_logger_list_alloc(mode, tail_lines, 0);
     }
-    const char *openDeviceFail = NULL;
-    const char *clearFail = NULL;
-    const char *setSizeFail = NULL;
-    const char *getSizeFail = NULL;
-    // We have three orthogonal actions below to clear, set log size and
-    // get log size. All sharing the same iteration loop.
     while (dev) {
         dev->logger_list = logger_list;
         dev->logger = android_logger_open(logger_list,
                                           android_name_to_log_id(dev->device));
         if (!dev->logger) {
-            openDeviceFail = openDeviceFail ?: dev->device;
-            dev = dev->next;
-            continue;
+            logcat_panic(false, "Unable to open log device '%s'\n",
+                         dev->device);
         }
 
         if (clearLog) {
-            if (android_logger_clear(dev->logger)) {
-                clearFail = clearFail ?: dev->device;
+            int ret;
+            ret = android_logger_clear(dev->logger);
+            if (ret) {
+                logcat_panic(false, "failed to clear the log");
             }
         }
 
-        if (setLogSize) {
-            if (android_logger_set_log_size(dev->logger, setLogSize)) {
-                setSizeFail = setSizeFail ?: dev->device;
-            }
+        if (setLogSize && android_logger_set_log_size(dev->logger, setLogSize)) {
+            logcat_panic(false, "failed to set the log size");
         }
 
         if (getLogSize) {
-            long size = android_logger_get_log_size(dev->logger);
-            long readable = android_logger_get_log_readable_size(dev->logger);
+            long size, readable;
 
-            if ((size < 0) || (readable < 0)) {
-                getSizeFail = getSizeFail ?: dev->device;
-            } else {
-                printf("%s: ring buffer is %ld%sb (%ld%sb consumed), "
-                       "max entry is %db, max payload is %db\n", dev->device,
-                       value_of_size(size), multiplier_of_size(size),
-                       value_of_size(readable), multiplier_of_size(readable),
-                       (int) LOGGER_ENTRY_MAX_LEN,
-                       (int) LOGGER_ENTRY_MAX_PAYLOAD);
+            size = android_logger_get_log_size(dev->logger);
+            if (size < 0) {
+                logcat_panic(false, "failed to get the log size");
             }
+
+            readable = android_logger_get_log_readable_size(dev->logger);
+            if (readable < 0) {
+                logcat_panic(false, "failed to get the readable log size");
+            }
+
+            printf("%s: ring buffer is %ld%sb (%ld%sb consumed), "
+                   "max entry is %db, max payload is %db\n", dev->device,
+                   value_of_size(size), multiplier_of_size(size),
+                   value_of_size(readable), multiplier_of_size(readable),
+                   (int) LOGGER_ENTRY_MAX_LEN, (int) LOGGER_ENTRY_MAX_PAYLOAD);
         }
 
         dev = dev->next;
-    }
-    // report any errors in the above loop and exit
-    if (openDeviceFail) {
-        logcat_panic(false, "Unable to open log device '%s'\n", openDeviceFail);
-    }
-    if (clearFail) {
-        logcat_panic(false, "failed to clear the '%s' log\n", clearFail);
-    }
-    if (setSizeFail) {
-        logcat_panic(false, "failed to set the '%s' log size\n", setSizeFail);
-    }
-    if (getSizeFail) {
-        logcat_panic(false, "failed to get the readable '%s' log size",
-                     getSizeFail);
     }
 
     if (setPruneList) {

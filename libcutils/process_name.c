@@ -25,19 +25,19 @@
 #include <unistd.h>
 
 #include <cutils/process_name.h>
-#if defined(__ANDROID__)
+#ifdef HAVE_ANDROID_OS
 #include <cutils/properties.h>
 #endif
 
 #define PROCESS_NAME_DEVICE "/sys/qemu_trace/process_name"
 
 static const char* process_name = "unknown";
-#if defined(__ANDROID__)
+#ifdef HAVE_ANDROID_OS
 static int running_in_emulator = -1;
 #endif
 
 void set_process_name(const char* new_name) {
-#if defined(__ANDROID__)
+#ifdef HAVE_ANDROID_OS
     char  propBuf[PROPERTY_VALUE_MAX];
 #endif
 
@@ -59,7 +59,7 @@ void set_process_name(const char* new_name) {
     }
 #endif
 
-#if defined(__ANDROID__)
+#ifdef HAVE_ANDROID_OS
     // If we know we are not running in the emulator, then return.
     if (running_in_emulator == 0) {
         return;

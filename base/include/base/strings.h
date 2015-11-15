@@ -17,7 +17,6 @@
 #ifndef BASE_STRINGS_H
 #define BASE_STRINGS_H
 
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -35,26 +34,9 @@ std::vector<std::string> Split(const std::string& s,
 // Trims whitespace off both ends of the given string.
 std::string Trim(const std::string& s);
 
-// Joins a container of things into a single string, using the given separator.
-template <typename ContainerT, typename SeparatorT>
-std::string Join(const ContainerT& things, SeparatorT separator) {
-  if (things.empty()) {
-    return "";
-  }
-
-  std::ostringstream result;
-  result << *things.begin();
-  for (auto it = std::next(things.begin()); it != things.end(); ++it) {
-    result << separator << *it;
-  }
-  return result.str();
-}
-
-// We instantiate the common cases in strings.cpp.
-extern template std::string Join(const std::vector<std::string>&, char);
-extern template std::string Join(const std::vector<const char*>&, char);
-extern template std::string Join(const std::vector<std::string>&, const std::string&);
-extern template std::string Join(const std::vector<const char*>&, const std::string&);
+// Joins a vector of strings into a single string, using the given separator.
+template <typename StringT>
+std::string Join(const std::vector<StringT>& strings, char separator);
 
 // Tests whether 's' starts with 'prefix'.
 bool StartsWith(const std::string& s, const char* prefix);

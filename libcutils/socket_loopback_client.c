@@ -20,7 +20,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#if !defined(_WIN32)
+#ifndef HAVE_WINSOCK
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/types.h>

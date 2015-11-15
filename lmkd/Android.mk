@@ -7,6 +7,4 @@ LOCAL_CFLAGS := -Werror
 
 LOCAL_MODULE := lmkd
 
-LOCAL_INIT_RC := lmkd.rc
-
 include $(BUILD_EXECUTABLE)

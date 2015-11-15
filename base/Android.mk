@@ -18,47 +18,31 @@ LOCAL_PATH := $(call my-dir)
 
 libbase_src_files := \
     file.cpp \
-    logging.cpp \
     stringprintf.cpp \
     strings.cpp \
-    test_utils.cpp \
-
-libbase_windows_src_files := \
-    utf8.cpp \
 
 libbase_test_src_files := \
     file_test.cpp \
-    logging_test.cpp \
-    parseint_test.cpp \
     stringprintf_test.cpp \
     strings_test.cpp \
     test_main.cpp \
-
-libbase_test_windows_src_files := \
-    utf8_test.cpp \
+    test_utils.cpp \
 
 libbase_cppflags := \
     -Wall \
-    -Wextra \
-    -Werror \
+    -Wextra 
 
-libbase_linux_cppflags := \
-    -Wexit-time-destructors \
-
-libbase_darwin_cppflags := \
-    -Wexit-time-destructors \
+#\
+#    -Werror \
 
 # Device
 # ------------------------------------------------------------------------------
 include $(CLEAR_VARS)
 LOCAL_MODULE := libbase
 LOCAL_CLANG := true
-LOCAL_SRC_FILES := $(libbase_src_files)
-LOCAL_SRC_FILES_darwin := $(libbase_darwin_src_files)
-LOCAL_SRC_FILES_linux := $(libbase_linux_src_files)
-LOCAL_SRC_FILES_windows := $(libbase_windows_src_files)
+LOCAL_SRC_FILES := $(libbase_src_files) logging.cpp
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/include
-LOCAL_CPPFLAGS := $(libbase_cppflags) $(libbase_linux_cppflags)
+LOCAL_CPPFLAGS := $(libbase_cppflags)
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)/include
 LOCAL_STATIC_LIBRARIES := libcutils
 LOCAL_MULTILIB := both
@@ -79,17 +63,14 @@ include $(BUILD_SHARED_LIBRARY)
 include $(CLEAR_VARS)
 LOCAL_MODULE := libbase
 LOCAL_SRC_FILES := $(libbase_src_files)
-LOCAL_SRC_FILES_darwin := $(libbase_darwin_src_files)
-LOCAL_SRC_FILES_linux := $(libbase_linux_src_files)
-LOCAL_SRC_FILES_windows := $(libbase_windows_src_files)
+ifneq ($(HOST_OS),windows)
+    LOCAL_SRC_FILES += logging.cpp
+endif
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/include
 LOCAL_CPPFLAGS := $(libbase_cppflags)
-LOCAL_CPPFLAGS_darwin := $(libbase_darwin_cppflags)
-LOCAL_CPPFLAGS_linux := $(libbase_linux_cppflags)
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)/include
 LOCAL_STATIC_LIBRARIES := libcutils
 LOCAL_MULTILIB := both
-LOCAL_MODULE_HOST_OS := darwin linux windows
 include $(BUILD_HOST_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -99,7 +80,6 @@ LOCAL_SHARED_LIBRARIES := liblog
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)/include
 LOCAL_STATIC_LIBRARIES := libcutils
 LOCAL_MULTILIB := both
-LOCAL_MODULE_HOST_OS := darwin linux windows
 include $(BUILD_HOST_SHARED_LIBRARY)
 
 # Tests
@@ -107,10 +87,7 @@ include $(BUILD_HOST_SHARED_LIBRARY)
 include $(CLEAR_VARS)
 LOCAL_MODULE := libbase_test
 LOCAL_CLANG := true
-LOCAL_SRC_FILES := $(libbase_test_src_files)
-LOCAL_SRC_FILES_darwin := $(libbase_test_darwin_src_files)
-LOCAL_SRC_FILES_linux := $(libbase_test_linux_src_files)
-LOCAL_SRC_FILES_windows := $(libbase_test_windows_src_files)
+LOCAL_SRC_FILES := $(libbase_test_src_files) logging_test.cpp
 LOCAL_C_INCLUDES := $(LOCAL_PATH)
 LOCAL_CPPFLAGS := $(libbase_cppflags)
 LOCAL_SHARED_LIBRARIES := libbase
@@ -121,11 +98,10 @@ include $(BUILD_NATIVE_TEST)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := libbase_test
-LOCAL_MODULE_HOST_OS := darwin linux windows
 LOCAL_SRC_FILES := $(libbase_test_src_files)
-LOCAL_SRC_FILES_darwin := $(libbase_test_darwin_src_files)
-LOCAL_SRC_FILES_linux := $(libbase_test_linux_src_files)
-LOCAL_SRC_FILES_windows := $(libbase_test_windows_src_files)
+ifneq ($(HOST_OS),windows)
+    LOCAL_SRC_FILES += logging_test.cpp
+endif
 LOCAL_C_INCLUDES := $(LOCAL_PATH)
 LOCAL_CPPFLAGS := $(libbase_cppflags)
 LOCAL_SHARED_LIBRARIES := libbase

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define TRACE_TAG ADB
+#define TRACE_TAG TRACE_ADB
 
 #include "sysdeps.h"
 #include "adb_auth.h"
@@ -32,13 +32,13 @@ bool auth_required = true;
 
 void send_auth_request(atransport *t)
 {
-    D("Calling send_auth_request");
+    D("Calling send_auth_request\n");
     apacket *p;
     int ret;
 
     ret = adb_auth_generate_token(t->token, sizeof(t->token));
     if (ret != sizeof(t->token)) {
-        D("Error generating token ret=%d", ret);
+        D("Error generating token ret=%d\n", ret);
         return;
     }
 
@@ -52,13 +52,13 @@ void send_auth_request(atransport *t)
 
 void send_auth_response(uint8_t *token, size_t token_size, atransport *t)
 {
-    D("Calling send_auth_response");
+    D("Calling send_auth_response\n");
     apacket *p = get_apacket();
     int ret;
 
     ret = adb_auth_sign(t->key, token, token_size, p->data);
     if (!ret) {
-        D("Error signing the token");
+        D("Error signing the token\n");
         put_apacket(p);
         return;
     }
@@ -71,13 +71,13 @@ void send_auth_response(uint8_t *token, size_t token_size, atransport *t)
 
 void send_auth_publickey(atransport *t)
 {
-    D("Calling send_auth_publickey");
+    D("Calling send_auth_publickey\n");
     apacket *p = get_apacket();
     int ret;
 
-    ret = adb_auth_get_userkey(p->data, MAX_PAYLOAD_V1);
+    ret = adb_auth_get_userkey(p->data, sizeof(p->data));
     if (!ret) {
-        D("Failed to get user public key");
+        D("Failed to get user public key\n");
         put_apacket(p);
         return;
     }

@@ -63,18 +63,32 @@ struct debugger_request_t {
   int32_t original_si_code;
 };
 
-static void wait_for_user_action(const debugger_request_t& request) {
+static void wait_for_user_action(const debugger_request_t &request) {
+  // Find out the name of the process that crashed.
+  char path[64];
+  snprintf(path, sizeof(path), "/proc/%d/exe", request.pid);
+
+  char exe[PATH_MAX];
+  int count;
+  if ((count = readlink(path, exe, sizeof(exe) - 1)) == -1) {
+    ALOGE("readlink('%s') failed: %s", path, strerror(errno));
+    strlcpy(exe, "unknown", sizeof(exe));
+  } else {
+    exe[count] = '\0';
+  }
+
   // Explain how to attach the debugger.
-  ALOGI("***********************************************************\n"
+  ALOGI("********************************************************\n"
         "* Process %d has been suspended while crashing.\n"
-        "* To attach gdbserver and start gdb, run this on the host:\n"
+        "* To attach gdbserver for a gdb connection on port 5039\n"
+        "* and start gdbclient:\n"
         "*\n"
-        "*     gdbclient %d\n"
+        "*     gdbclient %s :5039 %d\n"
         "*\n"
         "* Wait for gdb to start, then press the VOLUME DOWN key\n"
         "* to let the process continue crashing.\n"
-        "***********************************************************",
-        request.pid, request.tid);
+        "********************************************************",
+        request.pid, exe, request.tid);
 
   // Wait for VOLUME DOWN.
   if (init_getevent() == 0) {
@@ -120,6 +134,8 @@ static int get_process_info(pid_t tid, pid_t* out_pid, uid_t* out_uid, uid_t* ou
   return fields == 7 ? 0 : -1;
 }
 
+static int selinux_enabled;
+
 /*
  * Corresponds with debugger_action_t enum type in
  * include/cutils/debugger.h.
@@ -130,44 +146,34 @@ static const char *debuggerd_perms[] = {
   "dump_backtrace"
 };
 
-static int audit_callback(void* data, security_class_t /* cls */, char* buf, size_t len)
-{
-    struct debugger_request_t* req = reinterpret_cast<debugger_request_t*>(data);
-
-    if (!req) {
-        ALOGE("No debuggerd request audit data");
-        return 0;
-    }
-
-    snprintf(buf, len, "pid=%d uid=%d gid=%d", req->pid, req->uid, req->gid);
-    return 0;
-}
-
-static bool selinux_action_allowed(int s, debugger_request_t* request)
+static bool selinux_action_allowed(int s, pid_t tid, debugger_action_t action)
 {
   char *scon = NULL, *tcon = NULL;
   const char *tclass = "debuggerd";
   const char *perm;
   bool allowed = false;
 
-  if (request->action <= 0 || request->action >= (sizeof(debuggerd_perms)/sizeof(debuggerd_perms[0]))) {
-    ALOGE("SELinux:  No permission defined for debugger action %d", request->action);
+  if (selinux_enabled <= 0)
+    return true;
+
+  if (action <= 0 || action >= (sizeof(debuggerd_perms)/sizeof(debuggerd_perms[0]))) {
+    ALOGE("SELinux:  No permission defined for debugger action %d", action);
     return false;
   }
 
-  perm = debuggerd_perms[request->action];
+  perm = debuggerd_perms[action];
 
   if (getpeercon(s, &scon) < 0) {
     ALOGE("Cannot get peer context from socket\n");
     goto out;
   }
 
-  if (getpidcon(request->tid, &tcon) < 0) {
-    ALOGE("Cannot get context for tid %d\n", request->tid);
+  if (getpidcon(tid, &tcon) < 0) {
+    ALOGE("Cannot get context for tid %d\n", tid);
     goto out;
   }
 
-  allowed = (selinux_check_access(scon, tcon, tclass, perm, reinterpret_cast<void*>(request)) == 0);
+  allowed = (selinux_check_access(scon, tcon, tclass, perm, NULL) == 0);
 
 out:
    freecon(scon);
@@ -238,7 +244,7 @@ static int read_request(int fd, debugger_request_t* out_request) {
       return -1;
     }
 
-    if (!selinux_action_allowed(fd, out_request))
+    if (!selinux_action_allowed(fd, out_request->tid, out_request->action))
       return -1;
   } else {
     // No one else is allowed to dump arbitrary processes.
@@ -249,7 +255,10 @@ static int read_request(int fd, debugger_request_t* out_request) {
 
 static bool should_attach_gdb(debugger_request_t* request) {
   if (request->action == DEBUGGER_ACTION_CRASH) {
-    return property_get_bool("debug.debuggerd.wait_for_gdb", false);
+    char value[PROPERTY_VALUE_MAX];
+    property_get("debug.db.uid", value, "-1");
+    int debug_uid = atoi(value);
+    return debug_uid >= 0 && request->uid <= (uid_t)debug_uid;
   }
   return false;
 }
@@ -421,6 +430,7 @@ static void handle_request(int fd) {
             case SIGBUS:
             case SIGFPE:
             case SIGILL:
+            case SIGPIPE:
             case SIGSEGV:
 #ifdef SIGSTKFLT
             case SIGSTKFLT:
@@ -528,7 +538,7 @@ static int do_server() {
     return 1;
   fcntl(s, F_SETFD, FD_CLOEXEC);
 
-  ALOGI("debuggerd: starting\n");
+  ALOGI("debuggerd: " __DATE__ " " __TIME__ "\n");
 
   for (;;) {
     sockaddr addr;
@@ -579,8 +589,7 @@ static void usage() {
 int main(int argc, char** argv) {
   union selinux_callback cb;
   if (argc == 1) {
-    cb.func_audit = audit_callback;
-    selinux_set_callback(SELINUX_CB_AUDIT, cb);
+    selinux_enabled = is_selinux_enabled();
     cb.func_log = selinux_log_callback;
     selinux_set_callback(SELINUX_CB_LOG, cb);
     return do_server();

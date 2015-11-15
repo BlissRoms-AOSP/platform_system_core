@@ -76,7 +76,6 @@ static inline uint64_t get8LE(const uint8_t* src)
 
 static const struct fs_path_config android_dirs[] = {
     { 00770, AID_SYSTEM, AID_CACHE,  0, "cache" },
-    { 00500, AID_ROOT,   AID_ROOT,   0, "config" },
     { 00771, AID_SYSTEM, AID_SYSTEM, 0, "data/app" },
     { 00771, AID_SYSTEM, AID_SYSTEM, 0, "data/app-private" },
     { 00771, AID_ROOT,   AID_ROOT,   0, "data/dalvik-cache" },
@@ -88,13 +87,8 @@ static const struct fs_path_config android_dirs[] = {
     { 00771, AID_SHARED_RELRO, AID_SHARED_RELRO, 0, "data/misc/shared_relro" },
     { 00775, AID_MEDIA_RW, AID_MEDIA_RW, 0, "data/media" },
     { 00775, AID_MEDIA_RW, AID_MEDIA_RW, 0, "data/media/Music" },
-    { 00750, AID_ROOT,   AID_SHELL,  0, "data/nativetest" },
-    { 00750, AID_ROOT,   AID_SHELL,  0, "data/nativetest64" },
     { 00771, AID_SYSTEM, AID_SYSTEM, 0, "data" },
-    { 00755, AID_ROOT,   AID_SYSTEM, 0, "mnt" },
-    { 00755, AID_ROOT,   AID_ROOT,   0, "root" },
     { 00750, AID_ROOT,   AID_SHELL,  0, "sbin" },
-    { 00751, AID_ROOT,   AID_SDCARD_R, 0, "storage" },
     { 00755, AID_ROOT,   AID_SHELL,  0, "system/bin" },
     { 00755, AID_ROOT,   AID_SHELL,  0, "system/vendor" },
     { 00755, AID_ROOT,   AID_SHELL,  0, "system/xbin" },
@@ -120,26 +114,24 @@ static const struct fs_path_config android_files[] = {
     { 00550, AID_DHCP,      AID_SHELL,     0, "system/etc/dhcpcd/dhcpcd-run-hooks" },
     { 00555, AID_ROOT,      AID_ROOT,      0, "system/etc/ppp/*" },
     { 00555, AID_ROOT,      AID_ROOT,      0, "system/etc/rc.*" },
-    { 00440, AID_ROOT,      AID_ROOT,      0, "system/etc/recovery.img" },
     { 00444, AID_ROOT,      AID_ROOT,      0, conf_dir + 1 },
     { 00444, AID_ROOT,      AID_ROOT,      0, conf_file + 1 },
     { 00644, AID_SYSTEM,    AID_SYSTEM,    0, "data/app/*" },
     { 00644, AID_MEDIA_RW,  AID_MEDIA_RW,  0, "data/media/*" },
     { 00644, AID_SYSTEM,    AID_SYSTEM,    0, "data/app-private/*" },
     { 00644, AID_APP,       AID_APP,       0, "data/data/*" },
-    { 00750, AID_ROOT,      AID_SHELL,     0, "data/nativetest/*" },
-    { 00750, AID_ROOT,      AID_SHELL,     0, "data/nativetest64/*" },
 
-    /* the following four files are INTENTIONALLY set-uid, but they
+    /* the following five files are INTENTIONALLY set-uid, but they
      * are NOT included on user builds. */
     { 04750, AID_ROOT,      AID_SHELL,     0, "system/xbin/su" },
     { 06755, AID_ROOT,      AID_ROOT,      0, "system/xbin/librank" },
+    { 06755, AID_ROOT,      AID_ROOT,      0, "system/xbin/procrank" },
     { 06755, AID_ROOT,      AID_ROOT,      0, "system/xbin/procmem" },
     { 04770, AID_ROOT,      AID_RADIO,     0, "system/bin/pppd-ril" },
 
     /* the following files have enhanced capabilities and ARE included in user builds. */
-    { 00750, AID_ROOT,      AID_SHELL,     CAP_MASK_LONG(CAP_SETUID) | CAP_MASK_LONG(CAP_SETGID), "system/bin/run-as" },
-    { 00700, AID_SYSTEM,    AID_SHELL,     CAP_MASK_LONG(CAP_BLOCK_SUSPEND), "system/bin/inputflinger" },
+    { 00750, AID_ROOT,      AID_SHELL,     (1ULL << CAP_SETUID) | (1ULL << CAP_SETGID), "system/bin/run-as" },
+    { 00700, AID_SYSTEM,    AID_SHELL,     (1ULL << CAP_BLOCK_SUSPEND), "system/bin/inputflinger" },
 
     { 00750, AID_ROOT,      AID_ROOT,      0, "system/bin/uncrypt" },
     { 00750, AID_ROOT,      AID_ROOT,      0, "system/bin/install-recovery.sh" },
@@ -171,7 +163,8 @@ static int fs_config_open(int dir, const char *target_out_path)
         if (target_out_path[target_out_path_len] == '/') {
             skip_len++;
         }
-        if (asprintf(&name, "%s%s", target_out_path, (dir ? conf_dir : conf_file) + skip_len) != -1) {
+        asprintf(&name, "%s%s", target_out_path, (dir ? conf_dir : conf_file) + skip_len);
+        if (name) {
             fd = TEMP_FAILURE_RETRY(open(name, O_RDONLY | O_BINARY));
             free(name);
         }

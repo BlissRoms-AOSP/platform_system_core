@@ -95,7 +95,7 @@ bool LogReader::onDataAvailable(SocketClient *cli) {
     }
 
     bool nonBlock = false;
-    if (!fast<strncmp>(buffer, "dumpAndClose", 12)) {
+    if (strncmp(buffer, "dumpAndClose", 12) == 0) {
         // Allow writer to get some cycles, and wait for pending notifications
         sched_yield();
         LogTimeEntry::lock();
@@ -114,17 +114,15 @@ bool LogReader::onDataAvailable(SocketClient *cli) {
             log_time &start;
             uint64_t &sequence;
             uint64_t last;
-            bool isMonotonic;
 
         public:
-            LogFindStart(unsigned logMask, pid_t pid, log_time &start, uint64_t &sequence, bool isMonotonic) :
+            LogFindStart(unsigned logMask, pid_t pid, log_time &start, uint64_t &sequence) :
                     mPid(pid),
                     mLogMask(logMask),
                     startTimeSet(false),
                     start(start),
                     sequence(sequence),
-                    last(sequence),
-                    isMonotonic(isMonotonic) {
+                    last(sequence) {
             }
 
             static int callback(const LogBufferElement *element, void *obj) {
@@ -135,15 +133,12 @@ bool LogReader::onDataAvailable(SocketClient *cli) {
                         me->sequence = element->getSequence();
                         me->startTimeSet = true;
                         return -1;
-                    } else if (!me->isMonotonic ||
-                            android::isMonotonic(element->getRealTime())) {
+                    } else {
                         if (me->start < element->getRealTime()) {
                             me->sequence = me->last;
                             me->startTimeSet = true;
                             return -1;
                         }
-                        me->last = element->getSequence();
-                    } else {
                         me->last = element->getSequence();
                     }
                 }
@@ -151,8 +146,7 @@ bool LogReader::onDataAvailable(SocketClient *cli) {
             }
 
             bool found() { return startTimeSet; }
-        } logFindStart(logMask, pid, start, sequence,
-                       logbuf().isMonotonic() && android::isMonotonic(start));
+        } logFindStart(logMask, pid, start, sequence);
 
         logbuf().flushTo(cli, sequence, FlushCommand::hasReadLogs(cli),
                          logFindStart.callback, &logFindStart);

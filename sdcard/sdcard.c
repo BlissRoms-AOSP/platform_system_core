@@ -24,7 +24,6 @@
 #include <limits.h>
 #include <linux/fuse.h>
 #include <pthread.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +34,6 @@
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/time.h>
-#include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -43,7 +41,6 @@
 #include <cutils/hashmap.h>
 #include <cutils/log.h>
 #include <cutils/multiuser.h>
-#include <packagelistparser/packagelistparser.h>
 
 #include <private/android_filesystem_config.h>
 
@@ -105,6 +102,9 @@
 /* Pseudo-error constant used to indicate that no fuse status is needed
  * or that a reply has already been written. */
 #define NO_STATUS 1
+
+/* Path to system-provided mapping of package name to appIds */
+static const char* const kPackagesListFile = "/data/system/packages.list";
 
 /* Supplementary groups to execute with */
 static const gid_t kGroups[1] = { AID_PACKAGE_INFO };
@@ -244,7 +244,7 @@ struct fuse_handler {
      * buffer at the same time.  This allows us to share the underlying storage. */
     union {
         __u8 request_buffer[MAX_REQUEST_SIZE];
-        __u8 read_buffer[MAX_READ + PAGE_SIZE];
+        __u8 read_buffer[MAX_READ + PAGESIZE];
     };
 };
 
@@ -1215,7 +1215,7 @@ static int handle_read(struct fuse* fuse, struct fuse_handler* handler,
     __u32 size = req->size;
     __u64 offset = req->offset;
     int res;
-    __u8 *read_buffer = (__u8 *) ((uintptr_t)(handler->read_buffer + PAGE_SIZE) & ~((uintptr_t)PAGE_SIZE-1));
+    __u8 *read_buffer = (__u8 *) ((uintptr_t)(handler->read_buffer + PAGESIZE) & ~((uintptr_t)PAGESIZE-1));
 
     /* Don't access any other fields of hdr or req beyond this point, the read buffer
      * overlaps the request buffer and will clobber data in the request.  This
@@ -1241,7 +1241,7 @@ static int handle_write(struct fuse* fuse, struct fuse_handler* handler,
     struct fuse_write_out out;
     struct handle *h = id_to_ptr(req->fh);
     int res;
-    __u8 aligned_buffer[req->size] __attribute__((__aligned__(PAGE_SIZE)));
+    __u8 aligned_buffer[req->size] __attribute__((__aligned__(PAGESIZE)));
 
     if (req->flags & O_DIRECT) {
         memcpy(aligned_buffer, buffer, req->size);
@@ -1636,27 +1636,35 @@ static bool remove_str_to_int(void *key, void *value, void *context) {
     return true;
 }
 
-static bool package_parse_callback(pkg_info *info, void *userdata) {
-    struct fuse_global *global = (struct fuse_global *)userdata;
-
-    char* name = strdup(info->name);
-    hashmapPut(global->package_to_appid, name, (void*) (uintptr_t) info->uid);
-    packagelist_free(info);
-    return true;
-}
-
-static bool read_package_list(struct fuse_global* global) {
+static int read_package_list(struct fuse_global* global) {
     pthread_mutex_lock(&global->lock);
 
     hashmapForEach(global->package_to_appid, remove_str_to_int, global->package_to_appid);
 
-    bool rc = packagelist_parse(package_parse_callback, global);
+    FILE* file = fopen(kPackagesListFile, "r");
+    if (!file) {
+        ERROR("failed to open package list: %s\n", strerror(errno));
+        pthread_mutex_unlock(&global->lock);
+        return -1;
+    }
+
+    char buf[512];
+    while (fgets(buf, sizeof(buf), file) != NULL) {
+        char package_name[512];
+        int appid;
+        char gids[512];
+
+        if (sscanf(buf, "%s %d %*d %*s %*s %s", package_name, &appid, gids) == 3) {
+            char* package_name_dup = strdup(package_name);
+            hashmapPut(global->package_to_appid, package_name_dup, (void*) (uintptr_t) appid);
+        }
+    }
+
     TRACE("read_package_list: found %zu packages\n",
             hashmapSize(global->package_to_appid));
-
+    fclose(file);
     pthread_mutex_unlock(&global->lock);
-
-    return rc;
+    return 0;
 }
 
 static void watch_package_list(struct fuse_global* global) {
@@ -1672,11 +1680,11 @@ static void watch_package_list(struct fuse_global* global) {
     bool active = false;
     while (1) {
         if (!active) {
-            int res = inotify_add_watch(nfd, PACKAGES_LIST_FILE, IN_DELETE_SELF);
+            int res = inotify_add_watch(nfd, kPackagesListFile, IN_DELETE_SELF);
             if (res == -1) {
                 if (errno == ENOENT || errno == EACCES) {
                     /* Framework may not have created yet, sleep and retry */
-                    ERROR("missing \"%s\"; retrying\n", PACKAGES_LIST_FILE);
+                    ERROR("missing packages.list; retrying\n");
                     sleep(3);
                     continue;
                 } else {
@@ -1687,8 +1695,8 @@ static void watch_package_list(struct fuse_global* global) {
 
             /* Watch above will tell us about any future changes, so
              * read the current state. */
-            if (read_package_list(global) == false) {
-                ERROR("read_package_list failed\n");
+            if (read_package_list(global) == -1) {
+                ERROR("read_package_list failed: %s\n", strerror(errno));
                 return;
             }
             active = true;

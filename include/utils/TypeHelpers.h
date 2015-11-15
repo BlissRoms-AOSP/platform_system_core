@@ -131,8 +131,7 @@ int compare_type(const TYPE& lhs, const TYPE& rhs) {
 template<typename TYPE> inline
 void construct_type(TYPE* p, size_t n) {
     if (!traits<TYPE>::has_trivial_ctor) {
-        while (n > 0) {
-            n--;
+        while (n--) {
             new(p++) TYPE;
         }
     }
@@ -141,8 +140,7 @@ void construct_type(TYPE* p, size_t n) {
 template<typename TYPE> inline
 void destroy_type(TYPE* p, size_t n) {
     if (!traits<TYPE>::has_trivial_dtor) {
-        while (n > 0) {
-            n--;
+        while (n--) {
             p->~TYPE();
             p++;
         }
@@ -152,8 +150,7 @@ void destroy_type(TYPE* p, size_t n) {
 template<typename TYPE> inline
 void copy_type(TYPE* d, const TYPE* s, size_t n) {
     if (!traits<TYPE>::has_trivial_copy) {
-        while (n > 0) {
-            n--;
+        while (n--) {
             new(d) TYPE(*s);
             d++, s++;
         }
@@ -165,14 +162,12 @@ void copy_type(TYPE* d, const TYPE* s, size_t n) {
 template<typename TYPE> inline
 void splat_type(TYPE* where, const TYPE* what, size_t n) {
     if (!traits<TYPE>::has_trivial_copy) {
-        while (n > 0) {
-            n--;
+        while (n--) {
             new(where) TYPE(*what);
             where++;
         }
     } else {
-        while (n > 0) {
-            n--;
+        while (n--) {
             *where++ = *what;
         }
     }
@@ -187,8 +182,7 @@ void move_forward_type(TYPE* d, const TYPE* s, size_t n = 1) {
     } else {
         d += n;
         s += n;
-        while (n > 0) {
-            n--;
+        while (n--) {
             --d, --s;
             if (!traits<TYPE>::has_trivial_copy) {
                 new(d) TYPE(*s);
@@ -209,8 +203,7 @@ void move_backward_type(TYPE* d, const TYPE* s, size_t n = 1) {
     {
         memmove(d,s,n*sizeof(TYPE));
     } else {
-        while (n > 0) {
-            n--;
+        while (n--) {
             if (!traits<TYPE>::has_trivial_copy) {
                 new(d) TYPE(*s);
             } else {

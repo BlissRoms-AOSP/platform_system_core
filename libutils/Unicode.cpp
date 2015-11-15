@@ -18,7 +18,7 @@
 
 #include <stddef.h>
 
-#if defined(_WIN32)
+#ifdef HAVE_WINSOCK
 # undef  nhtol
 # undef  htonl
 # undef  nhtos

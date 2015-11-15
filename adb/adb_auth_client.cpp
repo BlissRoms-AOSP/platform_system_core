@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define TRACE_TAG AUTH
+#define TRACE_TAG TRACE_AUTH
 
 #include "sysdeps.h"
 #include "adb_auth.h"
@@ -47,20 +47,20 @@ static fdevent listener_fde;
 static int framework_fd = -1;
 
 static void usb_disconnected(void* unused, atransport* t);
-static struct adisconnect usb_disconnect = { usb_disconnected, nullptr};
+static struct adisconnect usb_disconnect = { usb_disconnected, 0, 0, 0 };
 static atransport* usb_transport;
 static bool needs_retry = false;
 
 static void read_keys(const char *file, struct listnode *list)
 {
     FILE *f;
-    char buf[MAX_PAYLOAD_V1];
+    char buf[MAX_PAYLOAD];
     char *sep;
     int ret;
 
     f = fopen(file, "re");
     if (!f) {
-        D("Can't open '%s'", file);
+        D("Can't open '%s'\n", file);
         return;
     }
 
@@ -69,7 +69,7 @@ static void read_keys(const char *file, struct listnode *list)
         auto key = reinterpret_cast<adb_public_key*>(
             calloc(1, sizeof(adb_public_key) + 4));
         if (key == nullptr) {
-            D("Can't malloc key");
+            D("Can't malloc key\n");
             break;
         }
 
@@ -79,13 +79,13 @@ static void read_keys(const char *file, struct listnode *list)
 
         ret = __b64_pton(buf, (u_char *)&key->key, sizeof(key->key) + 4);
         if (ret != sizeof(key->key)) {
-            D("%s: Invalid base64 data ret=%d", file, ret);
+            D("%s: Invalid base64 data ret=%d\n", file, ret);
             free(key);
             continue;
         }
 
         if (key->key.len != RSANUMWORDS) {
-            D("%s: Invalid key len %d", file, key->key.len);
+            D("%s: Invalid key len %d\n", file, key->key.len);
             free(key);
             continue;
         }
@@ -117,7 +117,7 @@ static void load_keys(struct listnode *list)
 
     while ((path = *paths++)) {
         if (!stat(path, &buf)) {
-            D("Loading keys from '%s'", path);
+            D("Loading keys from '%s'\n", path);
             read_keys(path, list);
         }
     }
@@ -163,7 +163,8 @@ int adb_auth_verify(uint8_t* token, uint8_t* sig, int siglen)
 
 static void usb_disconnected(void* unused, atransport* t)
 {
-    D("USB disconnect");
+    D("USB disconnect\n");
+    remove_transport_disconnect(usb_transport, &usb_disconnect);
     usb_transport = NULL;
     needs_retry = false;
 }
@@ -176,7 +177,7 @@ static void adb_auth_event(int fd, unsigned events, void *data)
     if (events & FDE_READ) {
         ret = unix_read(fd, response, sizeof(response));
         if (ret <= 0) {
-            D("Framework disconnect");
+            D("Framework disconnect\n");
             if (usb_transport)
                 fdevent_remove(&usb_transport->auth_fde);
             framework_fd = -1;
@@ -190,22 +191,22 @@ static void adb_auth_event(int fd, unsigned events, void *data)
 
 void adb_auth_confirm_key(unsigned char *key, size_t len, atransport *t)
 {
-    char msg[MAX_PAYLOAD_V1];
+    char msg[MAX_PAYLOAD];
     int ret;
 
     if (!usb_transport) {
         usb_transport = t;
-        t->AddDisconnect(&usb_disconnect);
+        add_transport_disconnect(t, &usb_disconnect);
     }
 
     if (framework_fd < 0) {
-        D("Client not connected");
+        D("Client not connected\n");
         needs_retry = true;
         return;
     }
 
     if (key[len - 1] != '\0') {
-        D("Key must be a null-terminated string");
+        D("Key must be a null-terminated string\n");
         return;
     }
 
@@ -214,11 +215,11 @@ void adb_auth_confirm_key(unsigned char *key, size_t len, atransport *t)
         D("Key too long. ret=%d", ret);
         return;
     }
-    D("Sending '%s'", msg);
+    D("Sending '%s'\n", msg);
 
     ret = unix_write(framework_fd, msg, ret);
     if (ret < 0) {
-        D("Failed to write PK, errno=%d", errno);
+        D("Failed to write PK, errno=%d\n", errno);
         return;
     }
 
@@ -236,7 +237,7 @@ static void adb_auth_listener(int fd, unsigned events, void *data)
 
     s = adb_socket_accept(fd, &addr, &alen);
     if (s < 0) {
-        D("Failed to accept: errno=%d", errno);
+        D("Failed to accept: errno=%d\n", errno);
         return;
     }
 
@@ -251,7 +252,7 @@ static void adb_auth_listener(int fd, unsigned events, void *data)
 void adbd_cloexec_auth_socket() {
     int fd = android_get_control_socket("adbd");
     if (fd == -1) {
-        D("Failed to get adbd socket");
+        D("Failed to get adbd socket\n");
         return;
     }
     fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -260,12 +261,12 @@ void adbd_cloexec_auth_socket() {
 void adbd_auth_init(void) {
     int fd = android_get_control_socket("adbd");
     if (fd == -1) {
-        D("Failed to get adbd socket");
+        D("Failed to get adbd socket\n");
         return;
     }
 
     if (listen(fd, 4) == -1) {
-        D("Failed to listen on '%d'", fd);
+        D("Failed to listen on '%d'\n", fd);
         return;
     }
 

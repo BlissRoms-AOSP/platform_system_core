@@ -59,6 +59,7 @@ struct log_t{
 
 // List of types of logs to simplify the logging decision in _LOG
 enum logtype {
+  ERROR,
   HEADER,
   THREAD,
   REGISTERS,

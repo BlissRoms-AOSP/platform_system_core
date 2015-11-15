@@ -74,7 +74,6 @@ static struct flag_list fs_mgr_flags[] = {
     { "noemulatedsd", MF_NOEMULATEDSD },
     { "notrim",       MF_NOTRIM },
     { "formattable", MF_FORMATTABLE },
-    { "slotselect",  MF_SLOTSELECT },
     { "defaults",    0 },
     { 0,             0 },
 };
@@ -332,11 +331,6 @@ struct fstab *fs_mgr_read_fstab(const char *fstab_path)
         fstab->recs[cnt].zram_size = flag_vals.zram_size;
         cnt++;
     }
-    /* If an A/B partition, modify block device to be the real block device */
-    if (fs_mgr_update_for_slotselect(fstab) != 0) {
-        ERROR("Error updating for slotselect\n");
-        goto err;
-    }
     fclose(fstab_file);
     free(line);
     return fstab;
@@ -485,9 +479,4 @@ int fs_mgr_is_notrim(struct fstab_rec *fstab)
 int fs_mgr_is_formattable(struct fstab_rec *fstab)
 {
     return fstab->fs_mgr_flags & (MF_FORMATTABLE);
-}
-
-int fs_mgr_is_slotselect(struct fstab_rec *fstab)
-{
-    return fstab->fs_mgr_flags & MF_SLOTSELECT;
 }

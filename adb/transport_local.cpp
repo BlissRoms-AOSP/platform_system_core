@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define TRACE_TAG TRANSPORT
+#define TRACE_TAG TRACE_TRANSPORT
 
 #include "sysdeps.h"
 #include "transport.h"
@@ -26,7 +26,6 @@
 #include <sys/types.h>
 
 #include <base/stringprintf.h>
-#include <cutils/sockets.h>
 
 #if !ADB_HOST
 #include "cutils/properties.h"
@@ -34,7 +33,6 @@
 
 #include "adb.h"
 #include "adb_io.h"
-#include "adb_utils.h"
 
 #if ADB_HOST
 /* we keep a list of opened transports. The atransport struct knows to which
@@ -51,22 +49,22 @@ static atransport*  local_transports[ ADB_LOCAL_TRANSPORT_MAX ];
 static int remote_read(apacket *p, atransport *t)
 {
     if(!ReadFdExactly(t->sfd, &p->msg, sizeof(amessage))){
-        D("remote local: read terminated (message)");
+        D("remote local: read terminated (message)\n");
         return -1;
     }
 
-    if(check_header(p, t)) {
-        D("bad header: terminated (data)");
+    if(check_header(p)) {
+        D("bad header: terminated (data)\n");
         return -1;
     }
 
     if(!ReadFdExactly(t->sfd, p->data, p->msg.data_length)){
-        D("remote local: terminated (data)");
+        D("remote local: terminated (data)\n");
         return -1;
     }
 
     if(check_data(p)) {
-        D("bad data: terminated (data)");
+        D("bad data: terminated (data)\n");
         return -1;
     }
 
@@ -78,67 +76,61 @@ static int remote_write(apacket *p, atransport *t)
     int   length = p->msg.data_length;
 
     if(!WriteFdExactly(t->sfd, &p->msg, sizeof(amessage) + length)) {
-        D("remote local: write terminated");
+        D("remote local: write terminated\n");
         return -1;
     }
 
     return 0;
 }
 
-void local_connect(int port) {
-    std::string dummy;
-    local_connect_arbitrary_ports(port-1, port, &dummy);
+
+int local_connect(int port) {
+    return local_connect_arbitrary_ports(port-1, port);
 }
 
-int local_connect_arbitrary_ports(int console_port, int adb_port, std::string* error) {
-    int fd = -1;
+int local_connect_arbitrary_ports(int console_port, int adb_port)
+{
+    int  fd = -1;
 
 #if ADB_HOST
-    if (find_emulator_transport_by_adb_port(adb_port) != nullptr) {
-        return -1;
-    }
-
     const char *host = getenv("ADBHOST");
     if (host) {
-        fd = network_connect(host, adb_port, SOCK_STREAM, 0, error);
+        fd = socket_network_client(host, adb_port, SOCK_STREAM);
     }
 #endif
     if (fd < 0) {
-        fd = network_loopback_client(adb_port, SOCK_STREAM, error);
+        fd = socket_loopback_client(adb_port, SOCK_STREAM);
     }
 
     if (fd >= 0) {
-        D("client: connected on remote on fd %d", fd);
+        D("client: connected on remote on fd %d\n", fd);
         close_on_exec(fd);
         disable_tcp_nagle(fd);
         std::string serial = android::base::StringPrintf("emulator-%d", console_port);
-        if (register_socket_transport(fd, serial.c_str(), adb_port, 1) == 0) {
-            return 0;
-        }
-        adb_close(fd);
+        register_socket_transport(fd, serial.c_str(), adb_port, 1);
+        return 0;
     }
     return -1;
 }
 
-#if ADB_HOST
+
 static void *client_socket_thread(void *x)
 {
-    adb_thread_setname("client_socket_thread");
-    D("transport: client_socket_thread() starting");
-    while (true) {
-        int port = DEFAULT_ADB_LOCAL_TRANSPORT_PORT;
-        int count = ADB_LOCAL_TRANSPORT_MAX;
+#if ADB_HOST
+    int  port  = DEFAULT_ADB_LOCAL_TRANSPORT_PORT;
+    int  count = ADB_LOCAL_TRANSPORT_MAX;
 
-        // Try to connect to any number of running emulator instances.
-        for ( ; count > 0; count--, port += 2 ) {
-            local_connect(port);
-        }
-        sleep(1);
+    D("transport: client_socket_thread() starting\n");
+
+    /* try to connect to any number of running emulator instances     */
+    /* this is only done when ADB starts up. later, each new emulator */
+    /* will send a message to ADB to indicate that is is starting up  */
+    for ( ; count > 0; count--, port += 2 ) {
+        (void) local_connect(port);
     }
+#endif
     return 0;
 }
-
-#else // ADB_HOST
 
 static void *server_socket_thread(void * arg)
 {
@@ -147,15 +139,13 @@ static void *server_socket_thread(void * arg)
     socklen_t alen;
     int port = (int) (uintptr_t) arg;
 
-    adb_thread_setname("server socket");
-    D("transport: server_socket_thread() starting");
+    D("transport: server_socket_thread() starting\n");
     serverfd = -1;
     for(;;) {
         if(serverfd == -1) {
-            std::string error;
-            serverfd = network_inaddr_any_server(port, SOCK_STREAM, &error);
+            serverfd = socket_inaddr_any_server(port, SOCK_STREAM);
             if(serverfd < 0) {
-                D("server: cannot bind socket yet: %s", error.c_str());
+                D("server: cannot bind socket yet: %s\n", strerror(errno));
                 adb_sleep_ms(1000);
                 continue;
             }
@@ -163,20 +153,21 @@ static void *server_socket_thread(void * arg)
         }
 
         alen = sizeof(addr);
-        D("server: trying to get new connection from %d", port);
+        D("server: trying to get new connection from %d\n", port);
         fd = adb_socket_accept(serverfd, &addr, &alen);
         if(fd >= 0) {
-            D("server: new connection on fd %d", fd);
+            D("server: new connection on fd %d\n", fd);
             close_on_exec(fd);
             disable_tcp_nagle(fd);
             register_socket_transport(fd, "host", port, 1);
         }
     }
-    D("transport: server_socket_thread() exiting");
+    D("transport: server_socket_thread() exiting\n");
     return 0;
 }
 
 /* This is relevant only for ADB daemon running inside the emulator. */
+#if !ADB_HOST
 /*
  * Redefine open and write for qemu_pipe.h that contains inlined references
  * to those routines. We will redifine them back after qemu_pipe.h inclusion.
@@ -233,8 +224,7 @@ static const char _ok_resp[]    = "ok";
     char tmp[256];
     char con_name[32];
 
-    adb_thread_setname("qemu socket");
-    D("transport: qemu_socket_thread() starting");
+    D("transport: qemu_socket_thread() starting\n");
 
     /* adb QEMUD service connection request. */
     snprintf(con_name, sizeof(con_name), "qemud:adb:%d", port);
@@ -244,8 +234,9 @@ static const char _ok_resp[]    = "ok";
     if (fd < 0) {
         /* This could be an older version of the emulator, that doesn't
          * implement adb QEMUD service. Fall back to the old TCP way. */
-        D("adb service is not available. Falling back to TCP socket.");
-        adb_thread_create(server_socket_thread, arg);
+        adb_thread_t thr;
+        D("adb service is not available. Falling back to TCP socket.\n");
+        adb_thread_create(&thr, server_socket_thread, arg);
         return 0;
     }
 
@@ -261,7 +252,7 @@ static const char _ok_resp[]    = "ok";
              * or 'ko' on failure. */
             res = adb_read(fd, tmp, sizeof(tmp));
             if (res != 2 || memcmp(tmp, _ok_resp, 2)) {
-                D("Accepting ADB host connection has failed.");
+                D("Accepting ADB host connection has failed.\n");
                 adb_close(fd);
             } else {
                 /* Host is connected. Register the transport, and start the
@@ -273,45 +264,49 @@ static const char _ok_resp[]    = "ok";
             /* Prepare for accepting of the next ADB host connection. */
             fd = qemu_pipe_open(con_name);
             if (fd < 0) {
-                D("adb service become unavailable.");
+                D("adb service become unavailable.\n");
                 return 0;
             }
         } else {
-            D("Unable to send the '%s' request to ADB service.", _accept_req);
+            D("Unable to send the '%s' request to ADB service.\n", _accept_req);
             return 0;
         }
     }
-    D("transport: qemu_socket_thread() exiting");
+    D("transport: qemu_socket_thread() exiting\n");
     return 0;
 }
 #endif  // !ADB_HOST
 
 void local_init(int port)
 {
+    adb_thread_t thr;
     void* (*func)(void *);
-    const char* debug_name = "";
 
-#if ADB_HOST
-    func = client_socket_thread;
-    debug_name = "client";
-#else
-    /* For the adbd daemon in the system image we need to distinguish
-     * between the device, and the emulator. */
-    char is_qemu[PROPERTY_VALUE_MAX];
-    property_get("ro.kernel.qemu", is_qemu, "");
-    if (!strcmp(is_qemu, "1")) {
-        /* Running inside the emulator: use QEMUD pipe as the transport. */
-        func = qemu_socket_thread;
+    if(HOST) {
+        func = client_socket_thread;
     } else {
-        /* Running inside the device: use TCP socket as the transport. */
+#if ADB_HOST
         func = server_socket_thread;
-    }
-    debug_name = "server";
+#else
+        /* For the adbd daemon in the system image we need to distinguish
+         * between the device, and the emulator. */
+        char is_qemu[PROPERTY_VALUE_MAX];
+        property_get("ro.kernel.qemu", is_qemu, "");
+        if (!strcmp(is_qemu, "1")) {
+            /* Running inside the emulator: use QEMUD pipe as the transport. */
+            func = qemu_socket_thread;
+        } else {
+            /* Running inside the device: use TCP socket as the transport. */
+            func = server_socket_thread;
+        }
 #endif // !ADB_HOST
+    }
 
-    D("transport: local %s init", debug_name);
-    if (!adb_thread_create(func, (void *) (uintptr_t) port)) {
-        fatal_errno("cannot create local socket %s thread", debug_name);
+    D("transport: local %s init\n", HOST ? "client" : "server");
+
+    if(adb_thread_create(&thr, func, (void *) (uintptr_t) port)) {
+        fatal_errno("cannot create local socket %s thread",
+                    HOST ? "client" : "server");
     }
 }
 
@@ -323,25 +318,23 @@ static void remote_kick(atransport *t)
     adb_close(fd);
 
 #if ADB_HOST
-    int  nn;
-    adb_mutex_lock( &local_transports_lock );
-    for (nn = 0; nn < ADB_LOCAL_TRANSPORT_MAX; nn++) {
-        if (local_transports[nn] == t) {
-            local_transports[nn] = NULL;
-            break;
+    if(HOST) {
+        int  nn;
+        adb_mutex_lock( &local_transports_lock );
+        for (nn = 0; nn < ADB_LOCAL_TRANSPORT_MAX; nn++) {
+            if (local_transports[nn] == t) {
+                local_transports[nn] = NULL;
+                break;
+            }
         }
+        adb_mutex_unlock( &local_transports_lock );
     }
-    adb_mutex_unlock( &local_transports_lock );
 #endif
 }
 
 static void remote_close(atransport *t)
 {
-    int fd = t->sfd;
-    if (fd != -1) {
-        t->sfd = -1;
-        adb_close(fd);
-    }
+    adb_close(t->fd);
 }
 
 
@@ -397,12 +390,12 @@ int init_socket_transport(atransport *t, int s, int adb_port, int local)
     t->write_to_remote = remote_write;
     t->sfd = s;
     t->sync_token = 1;
-    t->connection_state = kCsOffline;
+    t->connection_state = CS_OFFLINE;
     t->type = kTransportLocal;
     t->adb_port = 0;
 
 #if ADB_HOST
-    if (local) {
+    if (HOST && local) {
         adb_mutex_lock( &local_transports_lock );
         {
             t->adb_port = adb_port;
@@ -410,12 +403,12 @@ int init_socket_transport(atransport *t, int s, int adb_port, int local)
                     find_emulator_transport_by_adb_port_locked(adb_port);
             int index = get_available_local_transport_index_locked();
             if (existing_transport != NULL) {
-                D("local transport for port %d already registered (%p)?",
+                D("local transport for port %d already registered (%p)?\n",
                 adb_port, existing_transport);
                 fail = -1;
             } else if (index < 0) {
                 // Too many emulators.
-                D("cannot register more emulators. Maximum is %d",
+                D("cannot register more emulators. Maximum is %d\n",
                         ADB_LOCAL_TRANSPORT_MAX);
                 fail = -1;
             } else {

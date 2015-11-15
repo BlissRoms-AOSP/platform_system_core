@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include <errno.h>
 #include <stdarg.h>
 
 #include <string>
@@ -45,16 +44,14 @@ std::string getFakeLogPrint() {
   return g_fake_log_print;
 }
 
-extern "C" int __android_log_buf_write(int bufId, int prio, const char* tag, const char* msg) {
-  g_fake_log_buf += std::to_string(bufId) + ' ' + std::to_string(prio) + ' ';
+extern "C" int __android_log_buf_write(int, int, const char* tag, const char* msg) {
   g_fake_log_buf += tag;
   g_fake_log_buf += ' ';
   g_fake_log_buf += msg;
   return 1;
 }
 
-extern "C" int __android_log_print(int prio, const char* tag, const char* fmt, ...) {
-  g_fake_log_print += std::to_string(prio) + ' ';
+extern "C" int __android_log_print(int, const char* tag, const char* fmt, ...) {
   g_fake_log_print += tag;
   g_fake_log_print += ' ';
 
@@ -73,7 +70,6 @@ extern "C" log_id_t android_name_to_log_id(const char*) {
 }
 
 extern "C" struct logger_list* android_logger_list_open(log_id_t, int, unsigned int, pid_t) {
-  errno = EACCES;
   return nullptr;
 }
 

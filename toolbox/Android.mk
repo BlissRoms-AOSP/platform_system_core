@@ -2,7 +2,8 @@ LOCAL_PATH:= $(call my-dir)
 
 
 common_cflags := \
-    -Werror -Wno-unused-parameter -Wno-unused-const-variable \
+    -std=gnu99 \
+    -Werror -Wno-unused-parameter \
     -I$(LOCAL_PATH)/upstream-netbsd/include/ \
     -include bsd-compatibility.h \
 
@@ -24,35 +25,48 @@ LOCAL_CFLAGS += $(common_cflags) -Dmain=dd_main -DNO_CONV
 LOCAL_MODULE := libtoolbox_dd
 include $(BUILD_STATIC_LIBRARY)
 
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES := upstream-netbsd/usr.bin/du/du.c
+LOCAL_CFLAGS += $(common_cflags) -Dmain=du_main
+LOCAL_MODULE := libtoolbox_du
+include $(BUILD_STATIC_LIBRARY)
+
 
 include $(CLEAR_VARS)
 
 BSD_TOOLS := \
     dd \
+    du \
 
 OUR_TOOLS := \
+    df \
     getevent \
     iftop \
     ioctl \
+    ionice \
     log \
+    ls \
+    lsof \
+    mount \
     nandread \
     newfs_msdos \
     ps \
     prlimit \
+    renice \
     sendevent \
     start \
     stop \
     top \
+    uptime \
+    watchprops \
 
 ALL_TOOLS = $(BSD_TOOLS) $(OUR_TOOLS)
 
 LOCAL_SRC_FILES := \
-    start_stop.cpp \
     toolbox.c \
     $(patsubst %,%.c,$(OUR_TOOLS)) \
 
 LOCAL_CFLAGS += $(common_cflags)
-LOCAL_CONLYFLAGS += -std=gnu99
 
 LOCAL_SHARED_LIBRARIES := \
     libcutils \

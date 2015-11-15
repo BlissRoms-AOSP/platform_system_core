@@ -22,30 +22,8 @@
 bool getcwd(std::string* cwd);
 bool directory_exists(const std::string& path);
 
-// Like the regular basename and dirname, but thread-safe on all
-// platforms and capable of correctly handling exotic Windows paths.
-std::string adb_basename(const std::string& path);
-std::string adb_dirname(const std::string& path);
-
-bool mkdirs(const std::string& path);
-
 std::string escape_arg(const std::string& s);
 
-std::string dump_hex(const void* ptr, size_t byte_count);
-
-// Parses 'address' into 'host' and 'port'.
-// If no port is given, takes the default from *port.
-// 'canonical_address' then becomes "host:port" or "[host]:port" as appropriate.
-// Note that no real checking is done that 'host' or 'port' is valid; that's
-// left to getaddrinfo(3).
-// Returns false on failure and sets *error to an appropriate message.
-bool parse_host_and_port(const std::string& address,
-                         std::string* canonical_address,
-                         std::string* host, int* port,
-                         std::string* error);
-
-std::string perror_str(const char* msg);
-
-bool set_file_block_mode(int fd, bool block);
+void dump_hex(const void* ptr, size_t byte_count);
 
 #endif

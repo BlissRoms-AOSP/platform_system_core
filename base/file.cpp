@@ -24,20 +24,12 @@
 #include <string>
 
 #include "base/macros.h"  // For TEMP_FAILURE_RETRY on Darwin.
-#include "base/utf8.h"
 #define LOG_TAG "base.file"
 #include "cutils/log.h"
 #include "utils/Compat.h"
 
-#if !defined(_WIN32)
-#define O_BINARY 0
-#endif
-
 namespace android {
 namespace base {
-
-// Versions of standard library APIs that support UTF-8 strings.
-using namespace android::base::utf8;
 
 bool ReadFdToString(int fd, std::string* content) {
   content->clear();
@@ -53,7 +45,8 @@ bool ReadFdToString(int fd, std::string* content) {
 bool ReadFileToString(const std::string& path, std::string* content) {
   content->clear();
 
-  int fd = TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_BINARY));
+  int fd =
+      TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
   if (fd == -1) {
     return false;
   }
@@ -87,8 +80,9 @@ static bool CleanUpAfterFailedWrite(const std::string& path) {
 #if !defined(_WIN32)
 bool WriteStringToFile(const std::string& content, const std::string& path,
                        mode_t mode, uid_t owner, gid_t group) {
-  int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW | O_BINARY;
-  int fd = TEMP_FAILURE_RETRY(open(path.c_str(), flags, mode));
+  int fd = TEMP_FAILURE_RETRY(
+      open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+           mode));
   if (fd == -1) {
     ALOGE("android::WriteStringToFile open failed: %s", strerror(errno));
     return false;
@@ -114,8 +108,9 @@ bool WriteStringToFile(const std::string& content, const std::string& path,
 #endif
 
 bool WriteStringToFile(const std::string& content, const std::string& path) {
-  int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW | O_BINARY;
-  int fd = TEMP_FAILURE_RETRY(open(path.c_str(), flags, DEFFILEMODE));
+  int fd = TEMP_FAILURE_RETRY(
+      open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+           DEFFILEMODE));
   if (fd == -1) {
     return false;
   }

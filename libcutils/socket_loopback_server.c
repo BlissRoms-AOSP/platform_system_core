@@ -22,7 +22,7 @@
 
 #define LISTEN_BACKLOG 4
 
-#if !defined(_WIN32)
+#ifndef HAVE_WINSOCK
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/types.h>

@@ -17,13 +17,11 @@
 #include <utils/Looper.h>
 #include <utils/Timers.h>
 
-#include <errno.h>
+#include <unistd.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <inttypes.h>
-#include <string.h>
 #include <sys/eventfd.h>
-#include <unistd.h>
 
 
 namespace android {
@@ -75,8 +73,7 @@ Looper::Looper(bool allowNonCallbacks) :
         mPolling(false), mEpollFd(-1), mEpollRebuildRequired(false),
         mNextRequestSeq(0), mResponseIndex(0), mNextMessageUptime(LLONG_MAX) {
     mWakeEventFd = eventfd(0, EFD_NONBLOCK);
-    LOG_ALWAYS_FATAL_IF(mWakeEventFd < 0, "Could not make wake event fd: %s",
-                        strerror(errno));
+    LOG_ALWAYS_FATAL_IF(mWakeEventFd < 0, "Could not make wake event fd.  errno=%d", errno);
 
     AutoMutex _l(mLock);
     rebuildEpollLocked();
@@ -151,15 +148,15 @@ void Looper::rebuildEpollLocked() {
 
     // Allocate the new epoll instance and register the wake pipe.
     mEpollFd = epoll_create(EPOLL_SIZE_HINT);
-    LOG_ALWAYS_FATAL_IF(mEpollFd < 0, "Could not create epoll instance: %s", strerror(errno));
+    LOG_ALWAYS_FATAL_IF(mEpollFd < 0, "Could not create epoll instance.  errno=%d", errno);
 
     struct epoll_event eventItem;
     memset(& eventItem, 0, sizeof(epoll_event)); // zero out unused members of data field union
     eventItem.events = EPOLLIN;
     eventItem.data.fd = mWakeEventFd;
     int result = epoll_ctl(mEpollFd, EPOLL_CTL_ADD, mWakeEventFd, & eventItem);
-    LOG_ALWAYS_FATAL_IF(result != 0, "Could not add wake event fd to epoll instance: %s",
-                        strerror(errno));
+    LOG_ALWAYS_FATAL_IF(result != 0, "Could not add wake event fd to epoll instance.  errno=%d",
+            errno);
 
     for (size_t i = 0; i < mRequests.size(); i++) {
         const Request& request = mRequests.valueAt(i);
@@ -168,8 +165,8 @@ void Looper::rebuildEpollLocked() {
 
         int epollResult = epoll_ctl(mEpollFd, EPOLL_CTL_ADD, request.fd, & eventItem);
         if (epollResult < 0) {
-            ALOGE("Error adding epoll events for fd %d while rebuilding epoll set: %s",
-                  request.fd, strerror(errno));
+            ALOGE("Error adding epoll events for fd %d while rebuilding epoll set, errno=%d",
+                    request.fd, errno);
         }
     }
 }
@@ -268,7 +265,7 @@ int Looper::pollInner(int timeoutMillis) {
         if (errno == EINTR) {
             goto Done;
         }
-        ALOGW("Poll failed with an unexpected error: %s", strerror(errno));
+        ALOGW("Poll failed with an unexpected error, errno=%d", errno);
         result = POLL_ERROR;
         goto Done;
     }
@@ -413,7 +410,7 @@ void Looper::wake() {
     ssize_t nWrite = TEMP_FAILURE_RETRY(write(mWakeEventFd, &inc, sizeof(uint64_t)));
     if (nWrite != sizeof(uint64_t)) {
         if (errno != EAGAIN) {
-            ALOGW("Could not write wake signal: %s", strerror(errno));
+            ALOGW("Could not write wake signal, errno=%d", errno);
         }
     }
 }
@@ -477,7 +474,7 @@ int Looper::addFd(int fd, int ident, int events, const sp<LooperCallback>& callb
         if (requestIndex < 0) {
             int epollResult = epoll_ctl(mEpollFd, EPOLL_CTL_ADD, fd, & eventItem);
             if (epollResult < 0) {
-                ALOGE("Error adding epoll events for fd %d: %s", fd, strerror(errno));
+                ALOGE("Error adding epoll events for fd %d, errno=%d", fd, errno);
                 return -1;
             }
             mRequests.add(fd, request);
@@ -500,18 +497,18 @@ int Looper::addFd(int fd, int ident, int events, const sp<LooperCallback>& callb
                     // call instead, but that approach carries others disadvantages.
 #if DEBUG_CALLBACKS
                     ALOGD("%p ~ addFd - EPOLL_CTL_MOD failed due to file descriptor "
-                            "being recycled, falling back on EPOLL_CTL_ADD: %s",
-                            this, strerror(errno));
+                            "being recycled, falling back on EPOLL_CTL_ADD, errno=%d",
+                            this, errno);
 #endif
                     epollResult = epoll_ctl(mEpollFd, EPOLL_CTL_ADD, fd, & eventItem);
                     if (epollResult < 0) {
-                        ALOGE("Error modifying or adding epoll events for fd %d: %s",
-                                fd, strerror(errno));
+                        ALOGE("Error modifying or adding epoll events for fd %d, errno=%d",
+                                fd, errno);
                         return -1;
                     }
                     scheduleEpollRebuildLocked();
                 } else {
-                    ALOGE("Error modifying epoll events for fd %d: %s", fd, strerror(errno));
+                    ALOGE("Error modifying epoll events for fd %d, errno=%d", fd, errno);
                     return -1;
                 }
             }
@@ -566,7 +563,7 @@ int Looper::removeFd(int fd, int seq) {
                 // call instead, but that approach carries others disadvantages.
 #if DEBUG_CALLBACKS
                 ALOGD("%p ~ removeFd - EPOLL_CTL_DEL failed due to file descriptor "
-                        "being closed: %s", this, strerror(errno));
+                        "being closed, errno=%d", this, errno);
 #endif
                 scheduleEpollRebuildLocked();
             } else {
@@ -574,7 +571,7 @@ int Looper::removeFd(int fd, int seq) {
                 // our list of callbacks got out of sync with the epoll set somehow.
                 // We defensively rebuild the epoll set to avoid getting spurious
                 // notifications with nowhere to go.
-                ALOGE("Error removing epoll events for fd %d: %s", fd, strerror(errno));
+                ALOGE("Error removing epoll events for fd %d, errno=%d", fd, errno);
                 scheduleEpollRebuildLocked();
                 return -1;
             }

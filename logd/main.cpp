@@ -33,14 +33,12 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include <cstdbool>
 #include <memory>
 
 #include <cutils/properties.h>
 #include <cutils/sched_policy.h>
 #include <cutils/sockets.h>
 #include <log/event_tag_map.h>
-#include <packagelistparser/packagelistparser.h>
 #include <private/android_filesystem_config.h>
 #include <utils/threads.h>
 
@@ -49,7 +47,6 @@
 #include "LogListener.h"
 #include "LogAudit.h"
 #include "LogKlog.h"
-#include "LogUtils.h"
 
 #define KMSG_PRIORITY(PRI)                            \
     '<',                                              \
@@ -106,9 +103,7 @@ static int drop_privs() {
         return -1;
     }
 
-    gid_t groups[] = { AID_READPROC };
-
-    if (setgroups(sizeof(groups) / sizeof(groups[0]), groups) == -1) {
+    if (setgroups(0, NULL) == -1) {
         return -1;
     }
 
@@ -170,19 +165,6 @@ static sem_t reinit;
 static bool reinit_running = false;
 static LogBuffer *logBuf = NULL;
 
-static bool package_list_parser_cb(pkg_info *info, void * /* userdata */) {
-
-    bool rc = true;
-    if (info->uid == uid) {
-        name = strdup(info->name);
-        // false to stop processing
-        rc = false;
-    }
-
-    packagelist_free(info);
-    return rc;
-}
-
 static void *reinit_thread_start(void * /*obj*/) {
     prctl(PR_SET_NAME, "logd.daemon");
     set_sched_policy(0, SP_BACKGROUND);
@@ -197,8 +179,31 @@ static void *reinit_thread_start(void * /*obj*/) {
         if (uid) {
             name = NULL;
 
-            packagelist_parse(package_list_parser_cb, NULL);
+            FILE *fp = fopen("/data/system/packages.list", "r");
+            if (fp) {
+                // This simple parser is sensitive to format changes in
+                // frameworks/base/services/core/java/com/android/server/pm/Settings.java
+                // A dependency note has been added to that file to correct
+                // this parser.
 
+                char *buffer = NULL;
+                size_t len;
+                while (getline(&buffer, &len, fp) > 0) {
+                    char *userId = strchr(buffer, ' ');
+                    if (!userId) {
+                        continue;
+                    }
+                    *userId = '\0';
+                    unsigned long value = strtoul(userId + 1, NULL, 10);
+                    if (value != uid) {
+                        continue;
+                    }
+                    name = strdup(buffer);
+                    break;
+                }
+                free(buffer);
+                fclose(fp);
+            }
             uid = 0;
             sem_post(&uidName);
             continue;
@@ -214,7 +219,6 @@ static void *reinit_thread_start(void * /*obj*/) {
         // Anything that reads persist.<property>
         if (logBuf) {
             logBuf->init();
-            logBuf->initPrune(NULL);
         }
     }
 
@@ -282,37 +286,36 @@ static void readDmesg(LogAudit *al, LogKlog *kl) {
         return;
     }
 
-    int rc = klogctl(KLOG_SIZE_BUFFER, NULL, 0);
-    if (rc <= 0) {
+    int len = klogctl(KLOG_SIZE_BUFFER, NULL, 0);
+    if (len <= 0) {
         return;
     }
 
-    size_t len = rc + 1024; // Margin for additional input race or trailing nul
+    len += 1024; // Margin for additional input race or trailing nul
     std::unique_ptr<char []> buf(new char[len]);
 
-    rc = klogctl(KLOG_READ_ALL, buf.get(), len);
+    int rc = klogctl(KLOG_READ_ALL, buf.get(), len);
     if (rc <= 0) {
         return;
     }
 
-    if ((size_t)rc < len) {
+    if (rc < len) {
         len = rc + 1;
     }
-    buf[--len] = '\0';
+    buf[len - 1] = '\0';
 
-    if (kl && kl->isMonotonic()) {
-        kl->synchronize(buf.get(), len);
+    if (kl) {
+        kl->synchronize(buf.get());
     }
 
-    size_t sublen;
     for (char *ptr = NULL, *tok = buf.get();
-         (rc >= 0) && ((tok = log_strntok_r(tok, &len, &ptr, &sublen)));
+         (rc >= 0) && ((tok = log_strtok_r(tok, &ptr)));
          tok = NULL) {
         if (al) {
-            rc = al->log(tok, sublen);
+            rc = al->log(tok);
         }
         if (kl) {
-            rc = kl->log(tok, sublen);
+            rc = kl->log(tok);
         }
     }
 }
@@ -423,7 +426,7 @@ int main(int argc, char *argv[]) {
 
     LogListener *swl = new LogListener(logBuf, reader);
     // Backlog and /proc/sys/net/unix/max_dgram_qlen set to large value
-    if (swl->startListener(600)) {
+    if (swl->startListener(300)) {
         exit(1);
     }
 

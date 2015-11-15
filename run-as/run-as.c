@@ -20,8 +20,6 @@
 
 #include <dirent.h>
 #include <errno.h>
-#include <paths.h>
-#include <pwd.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -195,21 +193,10 @@ int main(int argc, char **argv)
         panic("Could not set SELinux security context: %s\n", strerror(errno));
     }
 
-    // cd into the data directory, and set $HOME correspondingly.
+    /* cd into the data directory */
     if (TEMP_FAILURE_RETRY(chdir(info.dataDir)) < 0) {
         panic("Could not cd to package's data directory: %s\n", strerror(errno));
     }
-    setenv("HOME", info.dataDir, 1);
-
-    // Reset parts of the environment, like su would.
-    setenv("PATH", _PATH_DEFPATH, 1);
-    unsetenv("IFS");
-
-    // Set the user-specific parts for this user.
-    struct passwd* pw = getpwuid(uid);
-    setenv("LOGNAME", pw->pw_name, 1);
-    setenv("SHELL", pw->pw_shell, 1);
-    setenv("USER", pw->pw_name, 1);
 
     /* User specified command for exec. */
     if ((argc >= commandArgvOfs + 1) &&

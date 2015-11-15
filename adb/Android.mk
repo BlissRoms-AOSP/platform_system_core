@@ -5,34 +5,18 @@
 
 LOCAL_PATH:= $(call my-dir)
 
-adb_host_sanitize :=
-adb_target_sanitize :=
+ifeq ($(HOST_OS),windows)
+  adb_host_clang := false  # libc++ for mingw not ready yet.
+else
+  adb_host_clang := true
+endif
 
 adb_version := $(shell git -C $(LOCAL_PATH) rev-parse --short=12 HEAD 2>/dev/null)-android
 
 ADB_COMMON_CFLAGS := \
-    -Wall -Wextra -Werror \
+    -Wall -Werror \
     -Wno-unused-parameter \
-    -Wno-missing-field-initializers \
-    -Wvla \
     -DADB_REVISION='"$(adb_version)"' \
-
-ADB_COMMON_linux_CFLAGS := \
-    -std=c++14 \
-    -Wexit-time-destructors \
-
-ADB_COMMON_darwin_CFLAGS := \
-    -std=c++14 \
-    -Wexit-time-destructors \
-
-# Define windows.h and tchar.h Unicode preprocessor symbols so that
-# CreateFile(), _tfopen(), etc. map to versions that take wchar_t*, breaking the
-# build if you accidentally pass char*. Fix by calling like:
-#   std::wstring path_wide;
-#   if (!android::base::UTF8ToWide(path_utf8, &path_wide)) { /* error handling */ }
-#   CreateFileW(path_wide.c_str());
-ADB_COMMON_windows_CFLAGS := \
-    -DUNICODE=1 -D_UNICODE=1 \
 
 # libadb
 # =========================================================
@@ -48,7 +32,6 @@ LIBADB_SRC_FILES := \
     adb_auth.cpp \
     adb_io.cpp \
     adb_listeners.cpp \
-    adb_trace.cpp \
     adb_utils.cpp \
     sockets.cpp \
     transport.cpp \
@@ -62,16 +45,8 @@ LIBADB_TEST_SRCS := \
 
 LIBADB_CFLAGS := \
     $(ADB_COMMON_CFLAGS) \
+    -Wno-missing-field-initializers \
     -fvisibility=hidden \
-
-LIBADB_linux_CFLAGS := \
-    $(ADB_COMMON_linux_CFLAGS) \
-
-LIBADB_darwin_CFLAGS := \
-    $(ADB_COMMON_darwin_CFLAGS) \
-
-LIBADB_windows_CFLAGS := \
-    $(ADB_COMMON_windows_CFLAGS) \
 
 LIBADB_darwin_SRC_FILES := \
     fdevent.cpp \
@@ -84,19 +59,9 @@ LIBADB_linux_SRC_FILES := \
     usb_linux.cpp \
 
 LIBADB_windows_SRC_FILES := \
+    get_my_path_windows.cpp \
     sysdeps_win32.cpp \
     usb_windows.cpp \
-
-LIBADB_TEST_linux_SRCS := \
-    fdevent_test.cpp \
-    socket_test.cpp \
-
-LIBADB_TEST_darwin_SRCS := \
-    fdevent_test.cpp \
-    socket_test.cpp \
-
-LIBADB_TEST_windows_SRCS := \
-    sysdeps_win32_test.cpp \
 
 include $(CLEAR_VARS)
 LOCAL_CLANG := true
@@ -107,39 +72,31 @@ LOCAL_SRC_FILES := \
     adb_auth_client.cpp \
     fdevent.cpp \
     jdwp_service.cpp \
+    qemu_tracing.cpp \
     usb_linux_client.cpp \
 
-LOCAL_SANITIZE := $(adb_target_sanitize)
-
-# Even though we're building a static library (and thus there's no link step for
-# this to take effect), this adds the includes to our path.
-LOCAL_STATIC_LIBRARIES := libbase
+LOCAL_SHARED_LIBRARIES := libbase
 
 include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
+LOCAL_CLANG := $(adb_host_clang)
 LOCAL_MODULE := libadb
-LOCAL_MODULE_HOST_OS := darwin linux windows
 LOCAL_CFLAGS := $(LIBADB_CFLAGS) -DADB_HOST=1
-LOCAL_CFLAGS_windows := $(LIBADB_windows_CFLAGS)
-LOCAL_CFLAGS_linux := $(LIBADB_linux_CFLAGS)
-LOCAL_CFLAGS_darwin := $(LIBADB_darwin_CFLAGS)
 LOCAL_SRC_FILES := \
     $(LIBADB_SRC_FILES) \
+    $(LIBADB_$(HOST_OS)_SRC_FILES) \
     adb_auth_host.cpp \
 
-LOCAL_SRC_FILES_darwin := $(LIBADB_darwin_SRC_FILES)
-LOCAL_SRC_FILES_linux := $(LIBADB_linux_SRC_FILES)
-LOCAL_SRC_FILES_windows := $(LIBADB_windows_SRC_FILES)
-
-LOCAL_SANITIZE := $(adb_host_sanitize)
+LOCAL_SHARED_LIBRARIES := libbase
 
 # Even though we're building a static library (and thus there's no link step for
-# this to take effect), this adds the includes to our path.
-LOCAL_STATIC_LIBRARIES := libcrypto_static libbase
+# this to take effect), this adds the SSL includes to our path.
+LOCAL_STATIC_LIBRARIES := libcrypto_static
 
-LOCAL_C_INCLUDES_windows := development/host/windows/usb/api/
-LOCAL_MULTILIB := first
+ifeq ($(HOST_OS),windows)
+    LOCAL_C_INCLUDES += development/host/windows/usb/api/
+endif
 
 include $(BUILD_HOST_STATIC_LIBRARY)
 
@@ -147,51 +104,29 @@ include $(CLEAR_VARS)
 LOCAL_CLANG := true
 LOCAL_MODULE := adbd_test
 LOCAL_CFLAGS := -DADB_HOST=0 $(LIBADB_CFLAGS)
-LOCAL_SRC_FILES := \
-    $(LIBADB_TEST_SRCS) \
-    $(LIBADB_TEST_linux_SRCS) \
-    shell_service.cpp \
-    shell_service_protocol.cpp \
-    shell_service_protocol_test.cpp \
-    shell_service_test.cpp \
-
-LOCAL_SANITIZE := $(adb_target_sanitize)
+LOCAL_SRC_FILES := $(LIBADB_TEST_SRCS)
 LOCAL_STATIC_LIBRARIES := libadbd
-LOCAL_SHARED_LIBRARIES := libbase libcutils
+LOCAL_SHARED_LIBRARIES := liblog libbase libcutils
 include $(BUILD_NATIVE_TEST)
 
-# adb_test
-# =========================================================
-
 include $(CLEAR_VARS)
+LOCAL_CLANG := $(adb_host_clang)
 LOCAL_MODULE := adb_test
-LOCAL_MODULE_HOST_OS := darwin linux windows
 LOCAL_CFLAGS := -DADB_HOST=1 $(LIBADB_CFLAGS)
-LOCAL_CFLAGS_windows := $(LIBADB_windows_CFLAGS)
-LOCAL_CFLAGS_linux := $(LIBADB_linux_CFLAGS)
-LOCAL_CFLAGS_darwin := $(LIBADB_darwin_CFLAGS)
-LOCAL_SRC_FILES := \
-    $(LIBADB_TEST_SRCS) \
-    services.cpp \
-    shell_service_protocol.cpp \
-    shell_service_protocol_test.cpp \
-
-LOCAL_SRC_FILES_linux := $(LIBADB_TEST_linux_SRCS)
-LOCAL_SRC_FILES_darwin := $(LIBADB_TEST_darwin_SRCS)
-LOCAL_SRC_FILES_windows := $(LIBADB_TEST_windows_SRCS)
-LOCAL_SANITIZE := $(adb_host_sanitize)
-LOCAL_SHARED_LIBRARIES := libbase
+LOCAL_SRC_FILES := $(LIBADB_TEST_SRCS) services.cpp
+LOCAL_SHARED_LIBRARIES := liblog libbase
 LOCAL_STATIC_LIBRARIES := \
     libadb \
     libcrypto_static \
     libcutils \
 
-# Set entrypoint to wmain from sysdeps_win32.cpp instead of main
-LOCAL_LDFLAGS_windows := -municode
-LOCAL_LDLIBS_linux := -lrt -ldl -lpthread
-LOCAL_LDLIBS_darwin := -framework CoreFoundation -framework IOKit
-LOCAL_LDLIBS_windows := -lws2_32 -luserenv
-LOCAL_STATIC_LIBRARIES_windows := AdbWinApi
+ifeq ($(HOST_OS),linux)
+  LOCAL_LDLIBS += -lrt -ldl -lpthread
+endif
+
+ifeq ($(HOST_OS),darwin)
+  LOCAL_LDLIBS += -framework CoreFoundation -framework IOKit
+endif
 
 include $(BUILD_HOST_NATIVE_TEST)
 
@@ -200,14 +135,11 @@ include $(BUILD_HOST_NATIVE_TEST)
 
 ifeq ($(HOST_OS),linux)
 include $(CLEAR_VARS)
+LOCAL_CLANG := $(adb_host_clang)
 LOCAL_MODULE := adb_device_tracker_test
 LOCAL_CFLAGS := -DADB_HOST=1 $(LIBADB_CFLAGS)
-LOCAL_CFLAGS_windows := $(LIBADB_windows_CFLAGS)
-LOCAL_CFLAGS_linux := $(LIBADB_linux_CFLAGS)
-LOCAL_CFLAGS_darwin := $(LIBADB_darwin_CFLAGS)
 LOCAL_SRC_FILES := test_track_devices.cpp
-LOCAL_SANITIZE := $(adb_host_sanitize)
-LOCAL_SHARED_LIBRARIES := libbase
+LOCAL_SHARED_LIBRARIES := liblog libbase
 LOCAL_STATIC_LIBRARIES := libadb libcrypto_static libcutils
 LOCAL_LDLIBS += -lrt -ldl -lpthread
 include $(BUILD_HOST_EXECUTABLE)
@@ -217,54 +149,51 @@ endif
 # =========================================================
 include $(CLEAR_VARS)
 
-LOCAL_LDLIBS_linux := -lrt -ldl -lpthread
+ifeq ($(HOST_OS),linux)
+  LOCAL_LDLIBS += -lrt -ldl -lpthread
+  LOCAL_CFLAGS += -DWORKAROUND_BUG6558362
+endif
 
-LOCAL_LDLIBS_darwin := -lpthread -framework CoreFoundation -framework IOKit -framework Carbon
+ifeq ($(HOST_OS),darwin)
+  LOCAL_LDLIBS += -lpthread -framework CoreFoundation -framework IOKit -framework Carbon
+  LOCAL_CFLAGS += -Wno-sizeof-pointer-memaccess -Wno-unused-parameter
+endif
 
-# Use wmain instead of main
-LOCAL_LDFLAGS_windows := -municode
-LOCAL_LDLIBS_windows := -lws2_32 -lgdi32
-LOCAL_STATIC_LIBRARIES_windows := AdbWinApi
-LOCAL_REQUIRED_MODULES_windows := AdbWinApi AdbWinUsbApi
+ifeq ($(HOST_OS),windows)
+  LOCAL_LDLIBS += -lws2_32 -lgdi32
+  EXTRA_STATIC_LIBS := AdbWinApi
+endif
+
+LOCAL_CLANG := $(adb_host_clang)
 
 LOCAL_SRC_FILES := \
-    adb_client.cpp \
-    client/main.cpp \
+    adb_main.cpp \
     console.cpp \
     commandline.cpp \
-    file_sync_client.cpp \
-    line_printer.cpp \
+    adb_client.cpp \
     services.cpp \
-    shell_service_protocol.cpp \
+    file_sync_client.cpp \
 
 LOCAL_CFLAGS += \
     $(ADB_COMMON_CFLAGS) \
     -D_GNU_SOURCE \
     -DADB_HOST=1 \
 
-LOCAL_CFLAGS_windows := \
-    $(ADB_COMMON_windows_CFLAGS)
-
-LOCAL_CFLAGS_linux := \
-    $(ADB_COMMON_linux_CFLAGS) \
-
-LOCAL_CFLAGS_darwin := \
-    $(ADB_COMMON_darwin_CFLAGS) \
-    -Wno-sizeof-pointer-memaccess -Wno-unused-parameter \
-
 LOCAL_MODULE := adb
 LOCAL_MODULE_TAGS := debug
-LOCAL_MODULE_HOST_OS := darwin linux windows
 
-LOCAL_SANITIZE := $(adb_host_sanitize)
 LOCAL_STATIC_LIBRARIES := \
     libadb \
     libbase \
     libcrypto_static \
     libcutils \
     liblog \
+    $(EXTRA_STATIC_LIBS) \
 
-LOCAL_CXX_STL := libc++_static
+# libc++ not available on windows yet
+ifneq ($(HOST_OS),windows)
+    LOCAL_CXX_STL := libc++_static
+endif
 
 # Don't add anything here, we don't want additional shared dependencies
 # on the host adb tool, and shared libraries that link against libc++
@@ -275,6 +204,12 @@ include $(BUILD_HOST_EXECUTABLE)
 
 $(call dist-for-goals,dist_files sdk,$(LOCAL_BUILT_MODULE))
 
+ifeq ($(HOST_OS),windows)
+$(LOCAL_INSTALLED_MODULE): \
+    $(HOST_OUT_EXECUTABLES)/AdbWinApi.dll \
+    $(HOST_OUT_EXECUTABLES)/AdbWinUsbApi.dll
+endif
+
 
 # adbd device daemon
 # =========================================================
@@ -284,18 +219,15 @@ include $(CLEAR_VARS)
 LOCAL_CLANG := true
 
 LOCAL_SRC_FILES := \
-    daemon/main.cpp \
+    adb_main.cpp \
     services.cpp \
     file_sync_service.cpp \
     framebuffer_service.cpp \
     remount_service.cpp \
     set_verity_enable_state_service.cpp \
-    shell_service.cpp \
-    shell_service_protocol.cpp \
 
 LOCAL_CFLAGS := \
     $(ADB_COMMON_CFLAGS) \
-    $(ADB_COMMON_linux_CFLAGS) \
     -DADB_HOST=0 \
     -D_GNU_SOURCE \
     -Wno-deprecated-declarations \
@@ -314,20 +246,15 @@ LOCAL_MODULE_PATH := $(TARGET_ROOT_OUT_SBIN)
 LOCAL_UNSTRIPPED_PATH := $(TARGET_ROOT_OUT_SBIN_UNSTRIPPED)
 LOCAL_C_INCLUDES += system/extras/ext4_utils
 
-LOCAL_SANITIZE := $(adb_target_sanitize)
 LOCAL_STATIC_LIBRARIES := \
     libadbd \
     libbase \
     libfs_mgr \
-    libfec \
-    libfec_rs \
-    libselinux \
     liblog \
-    libmincrypt \
-    libext4_utils_static \
-    libsquashfs_utils \
     libcutils \
-    libbase \
-    libcrypto_static
+    libc \
+    libmincrypt \
+    libselinux \
+    libext4_utils_static \
 
 include $(BUILD_EXECUTABLE)

@@ -39,7 +39,6 @@
 #include "zlib.h"
 
 #include "entry_name_utils-inl.h"
-#include "zip_archive_common.h"
 #include "ziparchive/zip_archive.h"
 
 using android::base::get_unaligned;
@@ -49,6 +48,161 @@ using android::base::get_unaligned;
 #ifndef O_BINARY
 #define O_BINARY 0
 #endif
+
+// The "end of central directory" (EOCD) record. Each archive
+// contains exactly once such record which appears at the end of
+// the archive. It contains archive wide information like the
+// number of entries in the archive and the offset to the central
+// directory of the offset.
+struct EocdRecord {
+  static const uint32_t kSignature = 0x06054b50;
+
+  // End of central directory signature, should always be
+  // |kSignature|.
+  uint32_t eocd_signature;
+  // The number of the current "disk", i.e, the "disk" that this
+  // central directory is on.
+  //
+  // This implementation assumes that each archive spans a single
+  // disk only. i.e, that disk_num == 1.
+  uint16_t disk_num;
+  // The disk where the central directory starts.
+  //
+  // This implementation assumes that each archive spans a single
+  // disk only. i.e, that cd_start_disk == 1.
+  uint16_t cd_start_disk;
+  // The number of central directory records on this disk.
+  //
+  // This implementation assumes that each archive spans a single
+  // disk only. i.e, that num_records_on_disk == num_records.
+  uint16_t num_records_on_disk;
+  // The total number of central directory records.
+  uint16_t num_records;
+  // The size of the central directory (in bytes).
+  uint32_t cd_size;
+  // The offset of the start of the central directory, relative
+  // to the start of the file.
+  uint32_t cd_start_offset;
+  // Length of the central directory comment.
+  uint16_t comment_length;
+ private:
+  EocdRecord() = default;
+  DISALLOW_COPY_AND_ASSIGN(EocdRecord);
+} __attribute__((packed));
+
+// A structure representing the fixed length fields for a single
+// record in the central directory of the archive. In addition to
+// the fixed length fields listed here, each central directory
+// record contains a variable length "file_name" and "extra_field"
+// whose lengths are given by |file_name_length| and |extra_field_length|
+// respectively.
+struct CentralDirectoryRecord {
+  static const uint32_t kSignature = 0x02014b50;
+
+  // The start of record signature. Must be |kSignature|.
+  uint32_t record_signature;
+  // Tool version. Ignored by this implementation.
+  uint16_t version_made_by;
+  // Tool version. Ignored by this implementation.
+  uint16_t version_needed;
+  // The "general purpose bit flags" for this entry. The only
+  // flag value that we currently check for is the "data descriptor"
+  // flag.
+  uint16_t gpb_flags;
+  // The compression method for this entry, one of |kCompressStored|
+  // and |kCompressDeflated|.
+  uint16_t compression_method;
+  // The file modification time and date for this entry.
+  uint16_t last_mod_time;
+  uint16_t last_mod_date;
+  // The CRC-32 checksum for this entry.
+  uint32_t crc32;
+  // The compressed size (in bytes) of this entry.
+  uint32_t compressed_size;
+  // The uncompressed size (in bytes) of this entry.
+  uint32_t uncompressed_size;
+  // The length of the entry file name in bytes. The file name
+  // will appear immediately after this record.
+  uint16_t file_name_length;
+  // The length of the extra field info (in bytes). This data
+  // will appear immediately after the entry file name.
+  uint16_t extra_field_length;
+  // The length of the entry comment (in bytes). This data will
+  // appear immediately after the extra field.
+  uint16_t comment_length;
+  // The start disk for this entry. Ignored by this implementation).
+  uint16_t file_start_disk;
+  // File attributes. Ignored by this implementation.
+  uint16_t internal_file_attributes;
+  // File attributes. Ignored by this implementation.
+  uint32_t external_file_attributes;
+  // The offset to the local file header for this entry, from the
+  // beginning of this archive.
+  uint32_t local_file_header_offset;
+ private:
+  CentralDirectoryRecord() = default;
+  DISALLOW_COPY_AND_ASSIGN(CentralDirectoryRecord);
+} __attribute__((packed));
+
+// The local file header for a given entry. This duplicates information
+// present in the central directory of the archive. It is an error for
+// the information here to be different from the central directory
+// information for a given entry.
+struct LocalFileHeader {
+  static const uint32_t kSignature = 0x04034b50;
+
+  // The local file header signature, must be |kSignature|.
+  uint32_t lfh_signature;
+  // Tool version. Ignored by this implementation.
+  uint16_t version_needed;
+  // The "general purpose bit flags" for this entry. The only
+  // flag value that we currently check for is the "data descriptor"
+  // flag.
+  uint16_t gpb_flags;
+  // The compression method for this entry, one of |kCompressStored|
+  // and |kCompressDeflated|.
+  uint16_t compression_method;
+  // The file modification time and date for this entry.
+  uint16_t last_mod_time;
+  uint16_t last_mod_date;
+  // The CRC-32 checksum for this entry.
+  uint32_t crc32;
+  // The compressed size (in bytes) of this entry.
+  uint32_t compressed_size;
+  // The uncompressed size (in bytes) of this entry.
+  uint32_t uncompressed_size;
+  // The length of the entry file name in bytes. The file name
+  // will appear immediately after this record.
+  uint16_t file_name_length;
+  // The length of the extra field info (in bytes). This data
+  // will appear immediately after the entry file name.
+  uint16_t extra_field_length;
+ private:
+  LocalFileHeader() = default;
+  DISALLOW_COPY_AND_ASSIGN(LocalFileHeader);
+} __attribute__((packed));
+
+struct DataDescriptor {
+  // The *optional* data descriptor start signature.
+  static const uint32_t kOptSignature = 0x08074b50;
+
+  // CRC-32 checksum of the entry.
+  uint32_t crc32;
+  // Compressed size of the entry.
+  uint32_t compressed_size;
+  // Uncompressed size of the entry.
+  uint32_t uncompressed_size;
+ private:
+  DataDescriptor() = default;
+  DISALLOW_COPY_AND_ASSIGN(DataDescriptor);
+} __attribute__((packed));
+
+
+static const uint32_t kGPBDDFlagMask = 0x0008;         // mask value that signifies that the entry has a DD
+
+// The maximum size of a central directory or a file
+// comment in bytes.
+static const uint32_t kMaxCommentLen = 65535;
 
 // The maximum number of bytes to scan backwards for the EOCD start.
 static const uint32_t kMaxEOCDSearch = kMaxCommentLen + sizeof(EocdRecord);
@@ -153,7 +307,7 @@ struct ZipArchive {
    * ((4 * UINT16_MAX) / 3 + 1) which can safely fit into a uint32_t.
    */
   uint32_t hash_table_size;
-  ZipString* hash_table;
+  ZipEntryName* hash_table;
 
   ZipArchive(const int fd, bool assume_ownership) :
       fd(fd),
@@ -189,7 +343,7 @@ static uint32_t RoundUpPower2(uint32_t val) {
   return val;
 }
 
-static uint32_t ComputeHash(const ZipString& name) {
+static uint32_t ComputeHash(const ZipEntryName& name) {
   uint32_t hash = 0;
   uint16_t len = name.name_length;
   const uint8_t* str = name.name;
@@ -205,15 +359,16 @@ static uint32_t ComputeHash(const ZipString& name) {
  * Convert a ZipEntry to a hash table index, verifying that it's in a
  * valid range.
  */
-static int64_t EntryToIndex(const ZipString* hash_table,
+static int64_t EntryToIndex(const ZipEntryName* hash_table,
                             const uint32_t hash_table_size,
-                            const ZipString& name) {
+                            const ZipEntryName& name) {
   const uint32_t hash = ComputeHash(name);
 
   // NOTE: (hash_table_size - 1) is guaranteed to be non-negative.
   uint32_t ent = hash & (hash_table_size - 1);
   while (hash_table[ent].name != NULL) {
-    if (hash_table[ent] == name) {
+    if (hash_table[ent].name_length == name.name_length &&
+        memcmp(hash_table[ent].name, name.name, name.name_length) == 0) {
       return ent;
     }
 
@@ -227,8 +382,8 @@ static int64_t EntryToIndex(const ZipString* hash_table,
 /*
  * Add a new entry to the hash table.
  */
-static int32_t AddToHash(ZipString *hash_table, const uint64_t hash_table_size,
-                         const ZipString& name) {
+static int32_t AddToHash(ZipEntryName *hash_table, const uint64_t hash_table_size,
+                         const ZipEntryName& name) {
   const uint64_t hash = ComputeHash(name);
   uint32_t ent = hash & (hash_table_size - 1);
 
@@ -237,7 +392,8 @@ static int32_t AddToHash(ZipString *hash_table, const uint64_t hash_table_size,
    * Further, we guarantee that the hashtable size is not 0.
    */
   while (hash_table[ent].name != NULL) {
-    if (hash_table[ent] == name) {
+    if (hash_table[ent].name_length == name.name_length &&
+        memcmp(hash_table[ent].name, name.name, name.name_length) == 0) {
       // We've found a duplicate entry. We don't accept it
       ALOGW("Zip: Found duplicate entry %.*s", name.name_length, name.name);
       return kDuplicateEntry;
@@ -317,7 +473,7 @@ static int32_t MapCentralDirectory0(int fd, const char* debug_file_name,
     return kEmptyArchive;
   }
 
-  ALOGV("+++ num_entries=%" PRIu32 " dir_size=%" PRIu32 " dir_offset=%" PRIu32,
+  ALOGV("+++ num_entries=%" PRIu32 "dir_size=%" PRIu32 " dir_offset=%" PRIu32,
         eocd->num_records, eocd->cd_size, eocd->cd_start_offset);
 
   /*
@@ -409,8 +565,8 @@ static int32_t ParseZipArchive(ZipArchive* archive) {
    * least one unused entry to avoid an infinite loop during creation.
    */
   archive->hash_table_size = RoundUpPower2(1 + (num_entries * 4) / 3);
-  archive->hash_table = reinterpret_cast<ZipString*>(calloc(archive->hash_table_size,
-      sizeof(ZipString)));
+  archive->hash_table = reinterpret_cast<ZipEntryName*>(calloc(archive->hash_table_size,
+      sizeof(ZipEntryName)));
 
   /*
    * Walk through the central directory, adding entries to the hash
@@ -449,7 +605,7 @@ static int32_t ParseZipArchive(ZipArchive* archive) {
     }
 
     /* add the CDE filename to the hash table */
-    ZipString entry_name;
+    ZipEntryName entry_name;
     entry_name.name = file_name;
     entry_name.name_length = file_name_length;
     const int add_result = AddToHash(archive->hash_table,
@@ -588,7 +744,7 @@ static int32_t FindEntry(const ZipArchive* archive, const int ent,
   // and other interesting attributes from the central directory. These
   // will later be compared against values from the local file header.
   data->method = cdr->compression_method;
-  data->mod_time = cdr->last_mod_date << 16 | cdr->last_mod_time;
+  data->mod_time = cdr->last_mod_time;
   data->crc32 = cdr->crc32;
   data->compressed_length = cdr->compressed_size;
   data->uncompressed_length = cdr->uncompressed_size;
@@ -695,41 +851,39 @@ struct IterationHandle {
   uint32_t position;
   // We're not using vector here because this code is used in the Windows SDK
   // where the STL is not available.
-  ZipString prefix;
-  ZipString suffix;
+  const uint8_t* prefix;
+  const uint16_t prefix_len;
+  const uint8_t* suffix;
+  const uint16_t suffix_len;
   ZipArchive* archive;
 
-  IterationHandle(const ZipString* in_prefix,
-                  const ZipString* in_suffix) {
-    if (in_prefix) {
-      uint8_t* name_copy = new uint8_t[in_prefix->name_length];
-      memcpy(name_copy, in_prefix->name, in_prefix->name_length);
-      prefix.name = name_copy;
-      prefix.name_length = in_prefix->name_length;
-    } else {
-      prefix.name = NULL;
-      prefix.name_length = 0;
+  IterationHandle(const ZipEntryName* prefix_name,
+                  const ZipEntryName* suffix_name)
+    : prefix(NULL),
+      prefix_len(prefix_name ? prefix_name->name_length : 0),
+      suffix(NULL),
+      suffix_len(suffix_name ? suffix_name->name_length : 0) {
+    if (prefix_name) {
+      uint8_t* prefix_copy = new uint8_t[prefix_len];
+      memcpy(prefix_copy, prefix_name->name, prefix_len);
+      prefix = prefix_copy;
     }
-    if (in_suffix) {
-      uint8_t* name_copy = new uint8_t[in_suffix->name_length];
-      memcpy(name_copy, in_suffix->name, in_suffix->name_length);
-      suffix.name = name_copy;
-      suffix.name_length = in_suffix->name_length;
-    } else {
-      suffix.name = NULL;
-      suffix.name_length = 0;
+    if (suffix_name) {
+      uint8_t* suffix_copy = new uint8_t[suffix_len];
+      memcpy(suffix_copy, suffix_name->name, suffix_len);
+      suffix = suffix_copy;
     }
   }
 
   ~IterationHandle() {
-    delete[] prefix.name;
-    delete[] suffix.name;
+    delete[] prefix;
+    delete[] suffix;
   }
 };
 
 int32_t StartIteration(ZipArchiveHandle handle, void** cookie_ptr,
-                       const ZipString* optional_prefix,
-                       const ZipString* optional_suffix) {
+                       const ZipEntryName* optional_prefix,
+                       const ZipEntryName* optional_suffix) {
   ZipArchive* archive = reinterpret_cast<ZipArchive*>(handle);
 
   if (archive == NULL || archive->hash_table == NULL) {
@@ -749,7 +903,7 @@ void EndIteration(void* cookie) {
   delete reinterpret_cast<IterationHandle*>(cookie);
 }
 
-int32_t FindEntry(const ZipArchiveHandle handle, const ZipString& entryName,
+int32_t FindEntry(const ZipArchiveHandle handle, const ZipEntryName& entryName,
                   ZipEntry* data) {
   const ZipArchive* archive = reinterpret_cast<ZipArchive*>(handle);
   if (entryName.name_length == 0) {
@@ -768,7 +922,7 @@ int32_t FindEntry(const ZipArchiveHandle handle, const ZipString& entryName,
   return FindEntry(archive, ent, data);
 }
 
-int32_t Next(void* cookie, ZipEntry* data, ZipString* name) {
+int32_t Next(void* cookie, ZipEntry* data, ZipEntryName* name) {
   IterationHandle* handle = reinterpret_cast<IterationHandle*>(cookie);
   if (handle == NULL) {
     return kInvalidHandle;
@@ -782,14 +936,18 @@ int32_t Next(void* cookie, ZipEntry* data, ZipString* name) {
 
   const uint32_t currentOffset = handle->position;
   const uint32_t hash_table_length = archive->hash_table_size;
-  const ZipString* hash_table = archive->hash_table;
+  const ZipEntryName *hash_table = archive->hash_table;
 
   for (uint32_t i = currentOffset; i < hash_table_length; ++i) {
     if (hash_table[i].name != NULL &&
-        (handle->prefix.name_length == 0 ||
-         hash_table[i].StartsWith(handle->prefix)) &&
-        (handle->suffix.name_length == 0 ||
-         hash_table[i].EndsWith(handle->suffix))) {
+        (handle->prefix_len == 0 ||
+         (hash_table[i].name_length >= handle->prefix_len &&
+          memcmp(handle->prefix, hash_table[i].name, handle->prefix_len) == 0)) &&
+        (handle->suffix_len == 0 ||
+         (hash_table[i].name_length >= handle->suffix_len &&
+          memcmp(handle->suffix,
+                 hash_table[i].name + hash_table[i].name_length - handle->suffix_len,
+                 handle->suffix_len) == 0))) {
       handle->position = (i + 1);
       const int error = FindEntry(archive, i, data);
       if (!error) {

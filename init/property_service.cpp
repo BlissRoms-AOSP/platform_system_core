@@ -90,11 +90,13 @@ void property_init() {
     }
 }
 
-static int check_mac_perms(const char *name, char *sctx, struct ucred *cr)
+static int check_mac_perms(const char *name, char *sctx)
 {
+    if (is_selinux_enabled() <= 0)
+        return 1;
+
     char *tctx = NULL;
     int result = 0;
-    property_audit_data audit_data;
 
     if (!sctx)
         goto err;
@@ -105,10 +107,7 @@ static int check_mac_perms(const char *name, char *sctx, struct ucred *cr)
     if (selabel_lookup(sehandle_prop, &tctx, name, 1) != 0)
         goto err;
 
-    audit_data.name = name;
-    audit_data.cr = cr;
-
-    if (selinux_check_access(sctx, tctx, "property_service", "set", reinterpret_cast<void*>(&audit_data)) == 0)
+    if (selinux_check_access(sctx, tctx, "property_service", "set", (void*) name) == 0)
         result = 1;
 
     freecon(tctx);
@@ -116,7 +115,7 @@ static int check_mac_perms(const char *name, char *sctx, struct ucred *cr)
     return result;
 }
 
-static int check_control_mac_perms(const char *name, char *sctx, struct ucred *cr)
+static int check_control_mac_perms(const char *name, char *sctx)
 {
     /*
      *  Create a name prefix out of ctl.<service name>
@@ -130,25 +129,24 @@ static int check_control_mac_perms(const char *name, char *sctx, struct ucred *c
     if (ret < 0 || (size_t) ret >= sizeof(ctl_name))
         return 0;
 
-    return check_mac_perms(ctl_name, sctx, cr);
+    return check_mac_perms(ctl_name, sctx);
 }
 
 /*
  * Checks permissions for setting system properties.
  * Returns 1 if uid allowed, 0 otherwise.
  */
-static int check_perms(const char *name, char *sctx, struct ucred *cr)
+static int check_perms(const char *name, char *sctx)
 {
     if(!strncmp(name, "ro.", 3))
         name +=3;
 
-    return check_mac_perms(name, sctx, cr);
+    return check_mac_perms(name, sctx);
 }
 
-std::string property_get(const char* name) {
-    char value[PROP_VALUE_MAX] = {0};
-    __system_property_get(name, value);
-    return value;
+int __property_get(const char *name, char *value)
+{
+    return __system_property_get(name, value);
 }
 
 static void write_persistent_property(const char *name, const char *value)
@@ -325,14 +323,14 @@ static void handle_property_set_fd()
             // Keep the old close-socket-early behavior when handling
             // ctl.* properties.
             close(s);
-            if (check_control_mac_perms(msg.value, source_ctx, &cr)) {
+            if (check_control_mac_perms(msg.value, source_ctx)) {
                 handle_control_message((char*) msg.name + 4, (char*) msg.value);
             } else {
                 ERROR("sys_prop: Unable to %s service ctl [%s] uid:%d gid:%d pid:%d\n",
                         msg.name + 4, msg.value, cr.uid, cr.gid, cr.pid);
             }
         } else {
-            if (check_perms(msg.name, source_ctx, &cr)) {
+            if (check_perms(msg.name, source_ctx)) {
                 property_set((char*) msg.name, (char*) msg.value);
             } else {
                 ERROR("sys_prop: permission denied uid:%d  name:%s\n",
@@ -503,8 +501,9 @@ bool properties_initialized() {
 
 static void load_override_properties() {
     if (ALLOW_LOCAL_PROP_OVERRIDE) {
-        std::string debuggable = property_get("ro.debuggable");
-        if (debuggable == "1") {
+        char debuggable[PROP_VALUE_MAX];
+        int ret = property_get("ro.debuggable", debuggable);
+        if (ret && (strcmp(debuggable, "1") == 0)) {
             load_properties_from_file(PROP_PATH_LOCAL_OVERRIDE, NULL);
         }
     }
@@ -522,17 +521,19 @@ void load_persist_props(void) {
 }
 
 void load_recovery_id_prop() {
-    std::string ro_hardware = property_get("ro.hardware");
-    if (ro_hardware.empty()) {
+    char fstab_filename[PROP_VALUE_MAX + sizeof(FSTAB_PREFIX)];
+    char propbuf[PROP_VALUE_MAX];
+    int ret = property_get("ro.hardware", propbuf);
+    if (!ret) {
         ERROR("ro.hardware not set - unable to load recovery id\n");
         return;
     }
-    std::string fstab_filename = FSTAB_PREFIX + ro_hardware;
+    snprintf(fstab_filename, sizeof(fstab_filename), FSTAB_PREFIX "%s", propbuf);
 
-    std::unique_ptr<fstab, void(*)(fstab*)> tab(fs_mgr_read_fstab(fstab_filename.c_str()),
+    std::unique_ptr<fstab, void(*)(fstab*)> tab(fs_mgr_read_fstab(fstab_filename),
             fs_mgr_free_fstab);
     if (!tab) {
-        ERROR("unable to read fstab %s: %s\n", fstab_filename.c_str(), strerror(errno));
+        ERROR("unable to read fstab %s: %s\n", fstab_filename, strerror(errno));
         return;
     }
 

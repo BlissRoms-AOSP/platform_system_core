@@ -22,7 +22,7 @@
 
 #include <cutils/sockets.h>
 
-#if defined(_WIN32)
+#ifdef HAVE_WINSOCK
 
 int socket_local_client(const char *name, int namespaceId, int type)
 {
@@ -30,7 +30,7 @@ int socket_local_client(const char *name, int namespaceId, int type)
     return -1;
 }
 
-#else /* !_WIN32 */
+#else /* !HAVE_WINSOCK */
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -165,4 +165,4 @@ int socket_local_client(const char *name, int namespaceId, int type)
     return s;
 }
 
-#endif /* !_WIN32 */
+#endif /* !HAVE_WINSOCK */

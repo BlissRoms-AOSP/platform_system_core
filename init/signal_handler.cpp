@@ -28,11 +28,12 @@
 #include <cutils/list.h>
 #include <cutils/sockets.h>
 
-#include "action.h"
 #include "init.h"
 #include "log.h"
-#include "service.h"
 #include "util.h"
+
+#define CRITICAL_CRASH_THRESHOLD    4       /* if we crash >4 times ... */
+#define CRITICAL_CRASH_WINDOW       (4*60)  /* ... in 4 minutes, goto recovery */
 
 static int signal_write_fd = -1;
 static int signal_read_fd = -1;
@@ -59,11 +60,11 @@ static bool wait_for_one_process() {
         return false;
     }
 
-    Service* svc = ServiceManager::GetInstance().FindServiceByPid(pid);
+    service* svc = service_find_by_pid(pid);
 
     std::string name;
     if (svc) {
-        name = android::base::StringPrintf("Service '%s' (pid %d)", svc->name().c_str(), pid);
+        name = android::base::StringPrintf("Service '%s' (pid %d)", svc->name, pid);
     } else {
         name = android::base::StringPrintf("Untracked pid %d", pid);
     }
@@ -74,11 +75,70 @@ static bool wait_for_one_process() {
         return true;
     }
 
-    if (svc->Reap()) {
-        waiting_for_exec = false;
-        ServiceManager::GetInstance().RemoveService(*svc);
+    // TODO: all the code from here down should be a member function on service.
+
+    if (!(svc->flags & SVC_ONESHOT) || (svc->flags & SVC_RESTART)) {
+        NOTICE("Service '%s' (pid %d) killing any children in process group\n", svc->name, pid);
+        kill(-pid, SIGKILL);
     }
 
+    // Remove any sockets we may have created.
+    for (socketinfo* si = svc->sockets; si; si = si->next) {
+        char tmp[128];
+        snprintf(tmp, sizeof(tmp), ANDROID_SOCKET_DIR"/%s", si->name);
+        unlink(tmp);
+    }
+
+    if (svc->flags & SVC_EXEC) {
+        INFO("SVC_EXEC pid %d finished...\n", svc->pid);
+        waiting_for_exec = false;
+        list_remove(&svc->slist);
+        free(svc->name);
+        free(svc);
+        return true;
+    }
+
+    svc->pid = 0;
+    svc->flags &= (~SVC_RUNNING);
+
+    // Oneshot processes go into the disabled state on exit,
+    // except when manually restarted.
+    if ((svc->flags & SVC_ONESHOT) && !(svc->flags & SVC_RESTART)) {
+        svc->flags |= SVC_DISABLED;
+    }
+
+    // Disabled and reset processes do not get restarted automatically.
+    if (svc->flags & (SVC_DISABLED | SVC_RESET))  {
+        svc->NotifyStateChange("stopped");
+        return true;
+    }
+
+    time_t now = gettime();
+    if ((svc->flags & SVC_CRITICAL) && !(svc->flags & SVC_RESTART)) {
+        if (svc->time_crashed + CRITICAL_CRASH_WINDOW >= now) {
+            if (++svc->nr_crashed > CRITICAL_CRASH_THRESHOLD) {
+                ERROR("critical process '%s' exited %d times in %d minutes; "
+                      "rebooting into recovery mode\n", svc->name,
+                      CRITICAL_CRASH_THRESHOLD, CRITICAL_CRASH_WINDOW / 60);
+                android_reboot(ANDROID_RB_RESTART2, 0, "recovery");
+                return true;
+            }
+        } else {
+            svc->time_crashed = now;
+            svc->nr_crashed = 1;
+        }
+    }
+
+    svc->flags &= (~SVC_RESTART);
+    svc->flags |= SVC_RESTARTING;
+
+    // Execute all onrestart commands for this service.
+    struct listnode* node;
+    list_for_each(node, &svc->onrestart.commands) {
+        command* cmd = node_to_item(node, struct command, clist);
+        cmd->func(cmd->nargs, cmd->args);
+    }
+    svc->NotifyStateChange("restarting");
     return true;
 }
 

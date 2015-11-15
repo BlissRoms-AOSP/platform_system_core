@@ -27,9 +27,6 @@ LOCAL_SRC_FILES_x86_64 := x86_64/machine.cpp
 
 LOCAL_CPPFLAGS := $(common_cppflags)
 
-LOCAL_INIT_RC_32 := debuggerd.rc
-LOCAL_INIT_RC_64 := debuggerd64.rc
-
 ifeq ($(TARGET_IS_64_BIT),true)
 LOCAL_CPPFLAGS += -DTARGET_IS_64_BIT
 endif
@@ -80,12 +77,12 @@ include $(BUILD_EXECUTABLE)
 
 debuggerd_test_src_files := \
     utility.cpp \
+    test/dump_maps_test.cpp \
     test/dump_memory_test.cpp \
     test/elf_fake.cpp \
     test/log_fake.cpp \
     test/property_fake.cpp \
     test/ptrace_fake.cpp \
-    test/tombstone_test.cpp \
     test/selinux_fake.cpp \
 
 debuggerd_shared_libraries := \
@@ -99,7 +96,6 @@ debuggerd_c_includes := \
 debuggerd_cpp_flags := \
     $(common_cppflags) \
     -Wno-missing-field-initializers \
-    -fno-rtti \
 
 # Only build the host tests on linux.
 ifeq ($(HOST_OS),linux)

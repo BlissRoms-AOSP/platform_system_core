@@ -37,7 +37,19 @@ commonSources := \
 # some files must not be compiled when building against Mingw
 # they correspond to features not used by our host development tools
 # which are also hard or even impossible to port to native Win32
-nonWindowsSources := \
+WINDOWS_HOST_ONLY :=
+ifeq ($(HOST_OS),windows)
+    ifeq ($(strip $(USE_CYGWIN)),)
+        WINDOWS_HOST_ONLY := 1
+    endif
+endif
+# USE_MINGW is defined when we build against Mingw on Linux
+ifneq ($(strip $(USE_MINGW)),)
+    WINDOWS_HOST_ONLY := 1
+endif
+
+ifneq ($(WINDOWS_HOST_ONLY),1)
+    commonSources += \
         fs.c \
         multiuser.c \
         socket_inaddr_any_server.c \
@@ -48,32 +60,31 @@ nonWindowsSources := \
         socket_network_client.c \
         sockets.c \
 
-nonWindowsHostSources := \
+    commonHostSources += \
         ashmem-host.c \
         trace-host.c
+
+endif
 
 
 # Shared and static library for host
 # ========================================================
 LOCAL_MODULE := libcutils
-LOCAL_SRC_FILES := $(commonSources) dlmalloc_stubs.c
-LOCAL_SRC_FILES_darwin := $(nonWindowsSources) $(nonWindowsHostSources)
-LOCAL_SRC_FILES_linux := $(nonWindowsSources) $(nonWindowsHostSources)
+LOCAL_SRC_FILES := $(commonSources) $(commonHostSources) dlmalloc_stubs.c
 LOCAL_STATIC_LIBRARIES := liblog
-LOCAL_CFLAGS_darwin := -Werror -Wall -Wextra
-LOCAL_CFLAGS_linux := -Werror -Wall -Wextra
+ifneq ($(HOST_OS),windows)
+LOCAL_CFLAGS += -Werror
+endif
 LOCAL_MULTILIB := both
-LOCAL_MODULE_HOST_OS := darwin linux windows
 include $(BUILD_HOST_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := libcutils
-LOCAL_SRC_FILES := $(commonSources) dlmalloc_stubs.c
-LOCAL_SRC_FILES_darwin := $(nonWindowsSources) $(nonWindowsHostSources)
-LOCAL_SRC_FILES_linux := $(nonWindowsSources) $(nonWindowsHostSources)
+LOCAL_SRC_FILES := $(commonSources) $(commonHostSources) dlmalloc_stubs.c
 LOCAL_SHARED_LIBRARIES := liblog
-LOCAL_CFLAGS_darwin := -Werror -Wall -Wextra
-LOCAL_CFLAGS_linux := -Werror -Wall -Wextra
+ifneq ($(HOST_OS),windows)
+LOCAL_CFLAGS += -Werror
+endif
 LOCAL_MULTILIB := both
 include $(BUILD_HOST_SHARED_LIBRARY)
 
@@ -85,7 +96,6 @@ include $(BUILD_HOST_SHARED_LIBRARY)
 include $(CLEAR_VARS)
 LOCAL_MODULE := libcutils
 LOCAL_SRC_FILES := $(commonSources) \
-        $(nonWindowsSources) \
         android_reboot.c \
         ashmem-dev.c \
         debugger.c \
@@ -95,6 +105,9 @@ LOCAL_SRC_FILES := $(commonSources) \
         qtaguid.c \
         trace-dev.c \
         uevent.c \
+
+# arch-arm/memset32.S does not compile with Clang.
+LOCAL_CLANG_ASFLAGS_arm += -no-integrated-as
 
 LOCAL_SRC_FILES_arm += arch-arm/memset32.S
 LOCAL_SRC_FILES_arm64 += arch-arm64/android_memset.S
@@ -115,9 +128,7 @@ LOCAL_STATIC_LIBRARIES := liblog
 ifneq ($(ENABLE_CPUSETS),)
 LOCAL_CFLAGS += -DUSE_CPUSETS
 endif
-LOCAL_CFLAGS += -Werror -Wall -Wextra -std=gnu90
-LOCAL_CLANG := true
-LOCAL_SANITIZE := integer
+LOCAL_CFLAGS += -Werror -std=gnu90
 include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -129,10 +140,8 @@ LOCAL_SHARED_LIBRARIES := liblog
 ifneq ($(ENABLE_CPUSETS),)
 LOCAL_CFLAGS += -DUSE_CPUSETS
 endif
-LOCAL_CFLAGS += -Werror -Wall -Wextra
+LOCAL_CFLAGS += -Werror
 LOCAL_C_INCLUDES := $(libcutils_c_includes)
-LOCAL_CLANG := true
-LOCAL_SANITIZE := integer
 include $(BUILD_SHARED_LIBRARY)
 
 include $(call all-makefiles-under,$(LOCAL_PATH))

@@ -24,7 +24,6 @@
 #include <sys/uio.h>
 #include <syslog.h>
 
-#include <log/logger.h>
 #include <private/android_filesystem_config.h>
 #include <private/android_logger.h>
 
@@ -123,19 +122,17 @@ int LogAudit::logPrint(const char *fmt, ...) {
             && (*cp == ':')) {
         memcpy(timeptr + sizeof(audit_str) - 1, "0.0", 3);
         memmove(timeptr + sizeof(audit_str) - 1 + 3, cp, strlen(cp) + 1);
-        if (!isMonotonic()) {
-            if (android::isMonotonic(now)) {
-                LogKlog::convertMonotonicToReal(now);
-            }
-        } else {
-            if (!android::isMonotonic(now)) {
-                LogKlog::convertRealToMonotonic(now);
-            }
+        //
+        // We are either in 1970ish (MONOTONIC) or 2015+ish (REALTIME) so to
+        // differentiate without prejudice, we use 1980 to delineate, earlier
+        // is monotonic, later is real.
+        //
+#       define EPOCH_PLUS_10_YEARS (10 * 1461 / 4 * 24 * 60 * 60)
+        if (now.tv_sec < EPOCH_PLUS_10_YEARS) {
+            LogKlog::convertMonotonicToReal(now);
         }
-    } else if (isMonotonic()) {
-        now = log_time(CLOCK_MONOTONIC);
     } else {
-        now = log_time(CLOCK_REALTIME);
+        now.strptime("", ""); // side effect of setting CLOCK_REALTIME
     }
 
     static const char pid_str[] = " pid=";
@@ -156,16 +153,15 @@ int LogAudit::logPrint(const char *fmt, ...) {
 
     // log to events
 
-    size_t l = strnlen(str, LOGGER_ENTRY_MAX_PAYLOAD);
+    size_t l = strlen(str);
     size_t n = l + sizeof(android_log_event_string_t);
 
     bool notify = false;
 
-    {   // begin scope for event buffer
-        uint32_t buffer[(n + sizeof(uint32_t) - 1) / sizeof(uint32_t)];
-
-        android_log_event_string_t *event
-            = reinterpret_cast<android_log_event_string_t *>(buffer);
+    android_log_event_string_t *event = static_cast<android_log_event_string_t *>(malloc(n));
+    if (!event) {
+        rc = -ENOMEM;
+    } else {
         event->header.tag = htole32(AUDITD_LOG_TAG);
         event->type = EVENT_TYPE_STRING;
         event->length = htole32(l);
@@ -174,10 +170,11 @@ int LogAudit::logPrint(const char *fmt, ...) {
         rc = logbuf->log(LOG_ID_EVENTS, now, uid, pid, tid,
                          reinterpret_cast<char *>(event),
                          (n <= USHRT_MAX) ? (unsigned short) n : USHRT_MAX);
+        free(event);
+
         if (rc >= 0) {
             notify = true;
         }
-        // end scope for event buffer
     }
 
     // log to main
@@ -185,7 +182,7 @@ int LogAudit::logPrint(const char *fmt, ...) {
     static const char comm_str[] = " comm=\"";
     const char *comm = strstr(str, comm_str);
     const char *estr = str + strlen(str);
-    const char *commfree = NULL;
+    char *commfree = NULL;
     if (comm) {
         estr = comm;
         comm += sizeof(comm_str) - 1;
@@ -209,31 +206,27 @@ int LogAudit::logPrint(const char *fmt, ...) {
         l = strlen(comm) + 1;
         ecomm = "";
     }
-    size_t b = estr - str;
-    if (b > LOGGER_ENTRY_MAX_PAYLOAD) {
-        b = LOGGER_ENTRY_MAX_PAYLOAD;
-    }
-    size_t e = strnlen(ecomm, LOGGER_ENTRY_MAX_PAYLOAD - b);
-    n = b + e + l + 2;
+    n = (estr - str) + strlen(ecomm) + l + 2;
 
-    {   // begin scope for main buffer
-        char newstr[n];
-
+    char *newstr = static_cast<char *>(malloc(n));
+    if (!newstr) {
+        rc = -ENOMEM;
+    } else {
         *newstr = info ? ANDROID_LOG_INFO : ANDROID_LOG_WARN;
         strlcpy(newstr + 1, comm, l);
-        strncpy(newstr + 1 + l, str, b);
-        strncpy(newstr + 1 + l + b, ecomm, e);
+        strncpy(newstr + 1 + l, str, estr - str);
+        strcpy(newstr + 1 + l + (estr - str), ecomm);
 
         rc = logbuf->log(LOG_ID_MAIN, now, uid, pid, tid, newstr,
                          (n <= USHRT_MAX) ? (unsigned short) n : USHRT_MAX);
+        free(newstr);
 
         if (rc >= 0) {
             notify = true;
         }
-        // end scope for main buffer
     }
 
-    free(const_cast<char *>(commfree));
+    free(commfree);
     free(str);
 
     if (notify) {
@@ -246,9 +239,9 @@ int LogAudit::logPrint(const char *fmt, ...) {
     return rc;
 }
 
-int LogAudit::log(char *buf, size_t len) {
+int LogAudit::log(char *buf) {
     char *audit = strstr(buf, " audit(");
-    if (!audit || (audit >= &buf[len])) {
+    if (!audit) {
         return 0;
     }
 
@@ -256,7 +249,7 @@ int LogAudit::log(char *buf, size_t len) {
 
     int rc;
     char *type = strstr(buf, "type=");
-    if (type && (type < &buf[len])) {
+    if (type) {
         rc = logPrint("%s %s", type, audit + 1);
     } else {
         rc = logPrint("%s", audit + 1);

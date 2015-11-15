@@ -17,7 +17,7 @@
 #include <cutils/sockets.h>
 #include <log/log.h>
 
-#if defined(__ANDROID__)
+#ifdef HAVE_ANDROID_OS
 /* For the socket trust (credentials) check */
 #include <private/android_filesystem_config.h>
 #define __android_unused
@@ -27,7 +27,7 @@
 
 bool socket_peer_is_trusted(int fd __android_unused)
 {
-#if defined(__ANDROID__)
+#ifdef HAVE_ANDROID_OS
     struct ucred cr;
     socklen_t len = sizeof(cr);
     int n = getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cr, &len);

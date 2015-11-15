@@ -37,7 +37,7 @@ static inline SchedPolicy _policy(SchedPolicy p)
    return p == SP_DEFAULT ? SP_SYSTEM_DEFAULT : p;
 }
 
-#if defined(__ANDROID__)
+#if defined(HAVE_ANDROID_OS)
 
 #include <pthread.h>
 #include <sched.h>
@@ -60,11 +60,9 @@ static int __sys_supports_schedgroups = -1;
 static int bg_cgroup_fd = -1;
 static int fg_cgroup_fd = -1;
 
-#ifdef USE_CPUSETS
 // File descriptors open to /dev/cpuset/../tasks, setup by initialize, or -1 on error
 static int bg_cpuset_fd = -1;
 static int fg_cpuset_fd = -1;
-#endif
 
 /* Add tid to the scheduling group defined by the policy */
 static int add_tid_to_cgroup(int tid, int fd)
@@ -146,7 +144,7 @@ static void __initialize(void) {
  */
 static int getSchedulerGroup(int tid, char* buf, size_t bufLen)
 {
-#if defined(__ANDROID__)
+#ifdef HAVE_ANDROID_OS
     char pathBuf[32];
     char lineBuf[256];
     FILE *fp;

@@ -220,8 +220,8 @@ TEST_F(LruCacheTest, NoLeak) {
 
     cache.put(ComplexKey(0), ComplexValue(0));
     cache.put(ComplexKey(1), ComplexValue(1));
-    EXPECT_EQ(2U, cache.size());
-    assertInstanceCount(2, 3);  // the member mNullValue counts as an instance
+    EXPECT_EQ(2, cache.size());
+    assertInstanceCount(2, 3);  // the null value counts as an instance
 }
 
 TEST_F(LruCacheTest, Clear) {
@@ -229,7 +229,7 @@ TEST_F(LruCacheTest, Clear) {
 
     cache.put(ComplexKey(0), ComplexValue(0));
     cache.put(ComplexKey(1), ComplexValue(1));
-    EXPECT_EQ(2U, cache.size());
+    EXPECT_EQ(2, cache.size());
     assertInstanceCount(2, 3);
     cache.clear();
     assertInstanceCount(0, 1);
@@ -241,7 +241,7 @@ TEST_F(LruCacheTest, ClearNoDoubleFree) {
 
         cache.put(ComplexKey(0), ComplexValue(0));
         cache.put(ComplexKey(1), ComplexValue(1));
-        EXPECT_EQ(2U, cache.size());
+        EXPECT_EQ(2, cache.size());
         assertInstanceCount(2, 3);
         cache.removeOldest();
         cache.clear();
@@ -255,13 +255,13 @@ TEST_F(LruCacheTest, ClearReuseOk) {
 
     cache.put(ComplexKey(0), ComplexValue(0));
     cache.put(ComplexKey(1), ComplexValue(1));
-    EXPECT_EQ(2U, cache.size());
+    EXPECT_EQ(2, cache.size());
     assertInstanceCount(2, 3);
     cache.clear();
     assertInstanceCount(0, 1);
     cache.put(ComplexKey(0), ComplexValue(0));
     cache.put(ComplexKey(1), ComplexValue(1));
-    EXPECT_EQ(2U, cache.size());
+    EXPECT_EQ(2, cache.size());
     assertInstanceCount(2, 3);
 }
 
@@ -273,7 +273,7 @@ TEST_F(LruCacheTest, Callback) {
     cache.put(1, "one");
     cache.put(2, "two");
     cache.put(3, "three");
-    EXPECT_EQ(3U, cache.size());
+    EXPECT_EQ(3, cache.size());
     cache.removeOldest();
     EXPECT_EQ(1, callback.callbackCount);
     EXPECT_EQ(1, callback.lastKey);
@@ -288,115 +288,9 @@ TEST_F(LruCacheTest, CallbackOnClear) {
     cache.put(1, "one");
     cache.put(2, "two");
     cache.put(3, "three");
-    EXPECT_EQ(3U, cache.size());
+    EXPECT_EQ(3, cache.size());
     cache.clear();
     EXPECT_EQ(3, callback.callbackCount);
-}
-
-TEST_F(LruCacheTest, IteratorCheck) {
-    LruCache<int, int> cache(100);
-
-    cache.put(1, 4);
-    cache.put(2, 5);
-    cache.put(3, 6);
-    EXPECT_EQ(3U, cache.size());
-
-    LruCache<int, int>::Iterator it(cache);
-    std::unordered_set<int> returnedValues;
-    while (it.next()) {
-        int v = it.value();
-        // Check we haven't seen the value before.
-        EXPECT_TRUE(returnedValues.find(v) == returnedValues.end());
-        returnedValues.insert(v);
-    }
-    EXPECT_EQ(std::unordered_set<int>({4, 5, 6}), returnedValues);
-}
-
-TEST_F(LruCacheTest, EmptyCacheIterator) {
-    // Check that nothing crashes...
-    LruCache<int, int> cache(100);
-
-    LruCache<int, int>::Iterator it(cache);
-    std::unordered_set<int> returnedValues;
-    while (it.next()) {
-        returnedValues.insert(it.value());
-    }
-    EXPECT_EQ(std::unordered_set<int>(), returnedValues);
-}
-
-TEST_F(LruCacheTest, OneElementCacheIterator) {
-    // Check that nothing crashes...
-    LruCache<int, int> cache(100);
-    cache.put(1, 2);
-
-    LruCache<int, int>::Iterator it(cache);
-    std::unordered_set<int> returnedValues;
-    while (it.next()) {
-        returnedValues.insert(it.value());
-    }
-    EXPECT_EQ(std::unordered_set<int>({ 2 }), returnedValues);
-}
-
-TEST_F(LruCacheTest, OneElementCacheRemove) {
-    LruCache<int, int> cache(100);
-    cache.put(1, 2);
-
-    cache.remove(1);
-
-    LruCache<int, int>::Iterator it(cache);
-    std::unordered_set<int> returnedValues;
-    while (it.next()) {
-        returnedValues.insert(it.value());
-    }
-    EXPECT_EQ(std::unordered_set<int>({ }), returnedValues);
-}
-
-TEST_F(LruCacheTest, Remove) {
-    LruCache<int, int> cache(100);
-    cache.put(1, 4);
-    cache.put(2, 5);
-    cache.put(3, 6);
-
-    cache.remove(2);
-
-    LruCache<int, int>::Iterator it(cache);
-    std::unordered_set<int> returnedValues;
-    while (it.next()) {
-        returnedValues.insert(it.value());
-    }
-    EXPECT_EQ(std::unordered_set<int>({ 4, 6 }), returnedValues);
-}
-
-TEST_F(LruCacheTest, RemoveYoungest) {
-    LruCache<int, int> cache(100);
-    cache.put(1, 4);
-    cache.put(2, 5);
-    cache.put(3, 6);
-
-    cache.remove(3);
-
-    LruCache<int, int>::Iterator it(cache);
-    std::unordered_set<int> returnedValues;
-    while (it.next()) {
-        returnedValues.insert(it.value());
-    }
-    EXPECT_EQ(std::unordered_set<int>({ 4, 5 }), returnedValues);
-}
-
-TEST_F(LruCacheTest, RemoveNonMember) {
-    LruCache<int, int> cache(100);
-    cache.put(1, 4);
-    cache.put(2, 5);
-    cache.put(3, 6);
-
-    cache.remove(7);
-
-    LruCache<int, int>::Iterator it(cache);
-    std::unordered_set<int> returnedValues;
-    while (it.next()) {
-        returnedValues.insert(it.value());
-    }
-    EXPECT_EQ(std::unordered_set<int>({ 4, 5, 6 }), returnedValues);
 }
 
 }

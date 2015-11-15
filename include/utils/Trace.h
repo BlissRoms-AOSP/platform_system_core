@@ -17,7 +17,7 @@
 #ifndef ANDROID_TRACE_H
 #define ANDROID_TRACE_H
 
-#if defined(__ANDROID__)
+#ifdef HAVE_ANDROID_OS
 
 #include <fcntl.h>
 #include <stdint.h>
@@ -59,11 +59,11 @@ private:
 
 }; // namespace android
 
-#else // !__ANDROID__
+#else // HAVE_ANDROID_OS
 
 #define ATRACE_NAME(...)
 #define ATRACE_CALL()
 
-#endif // __ANDROID__
+#endif // HAVE_ANDROID_OS
 
 #endif // ANDROID_TRACE_H
